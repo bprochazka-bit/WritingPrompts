@@ -46,12 +46,21 @@ def wrap_text(c, text, font, size, max_width):
 
 
 def draw_text_with_shadow(c, text, x, y, font, size, shadow_offset=2, text_color=white, shadow_color=None):
-    """Draw text with a drop shadow."""
-    if shadow_color is None:
-        shadow_color = Color(0, 0, 0, 0.7)
-    c.setFillColor(shadow_color)
+    """Draw text with a soft, diffuse drop shadow."""
     c.setFont(font, size)
-    c.drawString(x + shadow_offset, y - shadow_offset, text)
+    # Draw multiple shadow layers at increasing offsets for a soft diffuse look
+    layers = [
+        (shadow_offset * 0.3, 0.10),
+        (shadow_offset * 0.6, 0.12),
+        (shadow_offset * 1.0, 0.15),
+        (shadow_offset * 1.4, 0.18),
+        (shadow_offset * 1.8, 0.15),
+        (shadow_offset * 2.2, 0.12),
+        (shadow_offset * 2.8, 0.08),
+    ]
+    for offset_mult, alpha in layers:
+        c.setFillColor(Color(0, 0, 0, alpha))
+        c.drawString(x + offset_mult, y - offset_mult, text)
     c.setFillColor(text_color)
     c.drawString(x, y, text)
 
@@ -73,22 +82,29 @@ def draw_writing_prompt_page(c, prompt):
 
     img = Image.open(img_path)
     iw, ih = img.size
-    scale = max(WIDTH / iw, HEIGHT / ih)
+    # Use landscape page for landscape images to avoid cropping
+    if iw > ih:
+        pw, ph = HEIGHT, WIDTH  # swap to landscape
+        c.setPageSize((pw, ph))
+    else:
+        pw, ph = WIDTH, HEIGHT
+        c.setPageSize((pw, ph))
+    scale = max(pw / iw, ph / ih)
     draw_w = iw * scale
     draw_h = ih * scale
-    x_off = (WIDTH - draw_w) / 2
-    y_off = (HEIGHT - draw_h) / 2
+    x_off = (pw - draw_w) / 2
+    y_off = (ph - draw_h) / 2
     c.drawImage(ImageReader(img), x_off, y_off, draw_w, draw_h)
 
     # Dark overlay for readability
     c.setFillColor(Color(0, 0, 0, 0.45))
-    c.rect(0, 0, WIDTH, HEIGHT, fill=1, stroke=0)
+    c.rect(0, 0, pw, ph, fill=1, stroke=0)
 
     margin = 0.75 * inch
-    usable = WIDTH - 2 * margin
+    usable = pw - 2 * margin
 
     # Title
-    y = HEIGHT - 1.2 * inch
+    y = ph - 1.2 * inch
     title_font = "LibSansBold"
     title_size = 34
     title_lines = wrap_text(c, prompt["title"], title_font, title_size, usable)
@@ -115,16 +131,24 @@ def draw_silly_scene_page(c, prompt):
 
     img = Image.open(img_path)
     iw, ih = img.size
-    scale = max(WIDTH / iw, HEIGHT / ih)
+    # Use landscape page for landscape images to avoid cropping
+    if iw > ih:
+        pw, ph = HEIGHT, WIDTH  # swap to landscape
+        c.setPageSize((pw, ph))
+    else:
+        pw, ph = WIDTH, HEIGHT
+        c.setPageSize((pw, ph))
+    scale = max(pw / iw, ph / ih)
     draw_w = iw * scale
     draw_h = ih * scale
-    x_off = (WIDTH - draw_w) / 2
-    y_off = (HEIGHT - draw_h) / 2
+    x_off = (pw - draw_w) / 2
+    y_off = (ph - draw_h) / 2
     c.drawImage(ImageReader(img), x_off, y_off, draw_w, draw_h)
 
 
 def draw_reallife_prompt_page(c, prompt):
     """Real-life writing prompt: warm, journal-style design with vertically centered content."""
+    c.setPageSize((WIDTH, HEIGHT))
     bg = HexColor("#FFF8E7")
     c.setFillColor(bg)
     c.rect(0, 0, WIDTH, HEIGHT, fill=1, stroke=0)
@@ -195,6 +219,7 @@ def draw_reallife_prompt_page(c, prompt):
 
 def draw_story_starter_page(c, prompt):
     """Story starter: dramatic, adventure-style design with vertically centered content."""
+    c.setPageSize((WIDTH, HEIGHT))
     bg = HexColor("#1A1A2E")
     c.setFillColor(bg)
     c.rect(0, 0, WIDTH, HEIGHT, fill=1, stroke=0)
