@@ -1,0 +1,76 @@
+{
+  "title": "10 Writing Prompts",
+  "description": "Writing prompts for a 10-year-old boy. Goal: write 1 full page by hand.",
+  "prompts": [
+    {
+      "id": 1,
+      "emoji": "🟩",
+      "theme": "Minecraft",
+      "title": "Your Neighborhood Is Now Made of Blocks",
+      "prompt": "You wake up one morning and your entire neighborhood has turned into a Minecraft world. Everything is made of blocks — the trees, your house, even your dog. What do you do first? What do you build? What dangers appear as night falls?"
+    },
+    {
+      "id": 2,
+      "emoji": "🐶",
+      "theme": "The Dog Who Could Talk",
+      "title": "He's Been Keeping Secrets",
+      "prompt": "Your dog wakes up one day and starts whispering secrets to you — things he's seen, things he knows, things he's been waiting to tell you. What does he say? What's the biggest secret he's been keeping?"
+    },
+    {
+      "id": 3,
+      "emoji": "🏕️",
+      "theme": "Cub Scouts",
+      "title": "The Night Things Went Wrong (Then Right)",
+      "prompt": "Write about the most exciting, funny, or memorable moment from Cub Scouts — or invent the most epic camping trip that could happen. What went wrong? What went right? Who was the hero of the day?"
+    },
+    {
+      "id": 4,
+      "emoji": "🍄",
+      "theme": "Mario",
+      "title": "He Needs YOUR Help",
+      "prompt": "Mario shows up at your front door, out of breath, and tells you he needs YOUR help to save Princess Peach. He can't do it alone this time. How do you prepare? What power-ups do you wish existed in real life? Does your sister try to come along?"
+    },
+    {
+      "id": 5,
+      "emoji": "🖨️",
+      "theme": "3D Printing",
+      "title": "It Can Print ANYTHING",
+      "prompt": "You get access to a 3D printer that can print anything — not just plastic, but real food, living creatures, entire rooms. What do you print first? What goes wrong when you try to print something you weren't supposed to?"
+    },
+    {
+      "id": 6,
+      "emoji": "📖",
+      "theme": "Reading",
+      "title": "The Pages Started to Glow...",
+      "prompt": "You're reading your favorite book when the pages start to glow and you get sucked inside the story. You're now a character in the world of that book. What happens? Do you try to get back home, or do you decide to stay?"
+    },
+    {
+      "id": 7,
+      "emoji": "🧱",
+      "theme": "LEGO",
+      "title": "The Greatest LEGO Set Never Made",
+      "prompt": "You've been hired by LEGO to design the greatest set ever made. Describe exactly what it is, what it builds, what minifigures come with it, and why every kid on Earth needs it. Include the price and why it's worth it."
+    },
+    {
+      "id": 8,
+      "emoji": "📜",
+      "theme": "True Story",
+      "title": "A Historian From 500 Years Away",
+      "prompt": "Write a true account of one normal day in your life — from the moment you wake up to bedtime. The twist: write it as if a historian 500 years from now is reading it and has NO idea what a Nintendo, a school bus, or a refrigerator is. Explain everything."
+    },
+    {
+      "id": 9,
+      "emoji": "👾",
+      "theme": "Video Games",
+      "title": "You Are the Final Boss",
+      "prompt": "In this story, YOU are the villain — the final boss of a video game. A hero is coming to defeat you. Describe your lair, your powers, your henchmen, and your master plan. Then describe the epic final battle. Do you lose… or do you finally win?"
+    },
+    {
+      "id": 10,
+      "emoji": "🐕",
+      "theme": "Family Adventure",
+      "title": "You, Your Sister & the Dog",
+      "prompt": "Tell a story — true or made up — where you, your sister, and your dog accidentally end up in the middle of a wild adventure. It could start with something tiny, like the dog running out the front door, and grow into something completely unexpected."
+    }
+  ]
+}

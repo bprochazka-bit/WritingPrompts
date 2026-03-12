@@ -1,0 +1,66 @@
+{
+  "title": "10 Silly Scene Image Prompts",
+  "description": "Zany, unexpected scene combinations for illustrated image generation.",
+  "prompts": [
+    {
+      "id": 1,
+      "emoji": "🌭",
+      "title": "Ketchup Surfer",
+      "prompt": "A hotdog wearing sunglasses surfing on a giant wave of ketchup"
+    },
+    {
+      "id": 2,
+      "emoji": "🧦",
+      "title": "Oscar Sock",
+      "prompt": "A single sock wearing a tuxedo accepting an Oscar award on stage in front of a cheering crowd"
+    },
+    {
+      "id": 3,
+      "emoji": "🥦",
+      "title": "Broccoli Bodybuilder",
+      "prompt": "A piece of broccoli lifting enormous dumbbells at a gym, flexing and looking very proud of itself"
+    },
+    {
+      "id": 4,
+      "emoji": "🚽",
+      "title": "Toilet Skater",
+      "prompt": "A toilet riding a skateboard through a busy shopping mall while shoppers dive out of the way"
+    },
+    {
+      "id": 5,
+      "emoji": "🧀",
+      "title": "Cheese for President",
+      "prompt": "A giant slice of cheese standing at a podium giving a presidential speech with campaign signs that say 'Vote Cheese' in the background"
+    },
+    {
+      "id": 6,
+      "emoji": "🐌",
+      "title": "Snail Racer",
+      "prompt": "A snail driving a racecar at the Daytona 500, surrounded by real cars, with a determined expression on its face"
+    },
+    {
+      "id": 7,
+      "emoji": "🥄",
+      "title": "Cutlery Duel",
+      "prompt": "A spoon and a fork having a dramatic sword fight inside a kitchen drawer, with other utensils watching from the sides"
+    },
+    {
+      "id": 8,
+      "emoji": "🦆",
+      "title": "Bathtub Diver",
+      "prompt": "A rubber duck wearing full scuba gear and a diving helmet exploring the bottom of a bathtub as if it were the deep ocean"
+    },
+    {
+      "id": 9,
+      "emoji": "🌵",
+      "title": "Spa Cactus",
+      "prompt": "A cactus relaxing at a fancy spa, getting a massage and a cucumber facial, looking completely blissed out"
+    },
+    {
+      "id": 10,
+      "emoji": "🍕",
+      "title": "Pizza Spy",
+      "prompt": "A pizza slice dressed as a secret agent in a suit and tie, sneaking out of a pizza box using a tiny grappling hook"
+    }
+  ]
+}

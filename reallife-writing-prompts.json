@@ -1,0 +1,76 @@
+{
+  "title": "10 Real Life Writing Prompts",
+  "description": "Non-fiction, personal writing prompts for a 10-year-old boy. Based on real experiences, opinions, memories, and dreams. Goal: write one full page by hand.",
+  "prompts": [
+    {
+      "id": 1,
+      "emoji": "🏆",
+      "theme": "Personal Best",
+      "title": "The Time I Was Really Proud of Myself",
+      "prompt": "Think of a moment when you did something hard and it worked out. Maybe you earned a Cub Scout badge, finished a tough LEGO set, beat a level you'd been stuck on, or learned something new. Describe exactly what happened, how long it took, what was hard about it, and how you felt when you finally pulled it off."
+    },
+    {
+      "id": 2,
+      "emoji": "🌍",
+      "theme": "Dream Trip",
+      "title": "The One Place I Really Want to Go",
+      "prompt": "If you could go anywhere in the world — anywhere at all — where would it be and why? Describe what you imagine it looks, sounds, and feels like when you get there. What would you do on your first day? Who would you bring with you?"
+    },
+    {
+      "id": 3,
+      "emoji": "🎮",
+      "theme": "Gaming",
+      "title": "My Favorite Game and Why It's Actually Amazing",
+      "prompt": "Pick your all-time favorite video game — Minecraft, a Mario game, anything — and make the case for why it's great. Describe how you first discovered it, what makes it fun, what your greatest moment in it was, and why someone who has never played it should give it a try."
+    },
+    {
+      "id": 4,
+      "emoji": "👨‍👩‍👧‍👦",
+      "theme": "Family",
+      "title": "A Day With My Family I'll Never Forget",
+      "prompt": "Write about one specific day spent with your family that sticks out in your memory. It doesn't have to be a big vacation — it could be a lazy Sunday, a holiday, a road trip, or even just a funny dinner. What made it memorable? What did everyone say and do?"
+    },
+    {
+      "id": 5,
+      "emoji": "🐕",
+      "theme": "Pets",
+      "title": "Everything About My Dog",
+      "prompt": "Write a complete portrait of your dog — not just what they look like, but their personality, their weird habits, their favorite things, and the funniest or strangest thing they've ever done. If your dog could describe themselves, what would they say?"
+    },
+    {
+      "id": 6,
+      "emoji": "🔭",
+      "theme": "Curiosity",
+      "title": "The Thing I Want to Know More About",
+      "prompt": "What's one topic — science, history, technology, nature, anything — that you find yourself thinking about and wanting to learn more about? Write about what you already know, what you're curious about, and what you think you might want to do with that interest someday."
+    },
+    {
+      "id": 7,
+      "emoji": "🏅",
+      "theme": "Cub Scouts",
+      "title": "What Scouting Has Taught Me",
+      "prompt": "Write honestly about what being a Cub Scout has actually been like. What have you learned — not just skills, but things about yourself? What's been your favorite activity or memory so far? What do you hope to do or earn before you're done?"
+    },
+    {
+      "id": 8,
+      "emoji": "📺",
+      "theme": "Opinion",
+      "title": "My Totally Honest Review",
+      "prompt": "Pick anything — a game, a movie, a food, a place, a book — and write a completely honest review of it as if you were a professional critic. Give it a score out of 10. Explain what was great, what wasn't, and who you would or wouldn't recommend it to."
+    },
+    {
+      "id": 9,
+      "emoji": "🔮",
+      "theme": "Future",
+      "title": "Me at 20: What I Think My Life Will Look Like",
+      "prompt": "Imagine yourself at 20 years old. Where are you living? What are you doing? What did you end up caring about most? Write a description of a single day in your future life — from morning to night — based on what you hope and think your life might look like."
+    },
+    {
+      "id": 10,
+      "emoji": "🧠",
+      "theme": "Reflection",
+      "title": "The Most Important Thing I've Learned So Far",
+      "prompt": "What is the single most useful, interesting, or important thing you've learned in your life so far — from school, from family, from experience, from anywhere? Explain what it is, how you learned it, and why you think it matters. Give an example of a time it actually helped you."
+    }
+  ]
+}

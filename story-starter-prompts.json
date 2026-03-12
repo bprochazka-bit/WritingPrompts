@@ -1,0 +1,76 @@
+{
+  "title": "10 Story Starter Writing Prompts",
+  "description": "Writing prompts for a 10-year-old boy. Each prompt includes the first two sentences of a story. Goal: keep writing for one full page!",
+  "prompts": [
+    {
+      "id": 1,
+      "emoji": "🟩",
+      "theme": "Minecraft",
+      "title": "Block World",
+      "opening": "I knew something was wrong the second I looked out my bedroom window and saw that the oak tree in our front yard had turned into a perfect cube. My dog was barking at it from the porch, and even he looked blocky — like someone had rebuilt him overnight out of brown and tan squares."
+    },
+    {
+      "id": 2,
+      "emoji": "🐶",
+      "theme": "Talking Dog",
+      "title": "The Secret Keeper",
+      "opening": "It started as a normal Tuesday morning — until my dog leaned over, looked me dead in the eyes, and whispered, \"We need to talk about the backyard.\" I dropped my cereal spoon so fast it bounced off the floor twice."
+    },
+    {
+      "id": 3,
+      "emoji": "🏕️",
+      "theme": "Cub Scouts",
+      "title": "The Third Tent",
+      "opening": "Our troop had set up two tents at the campsite, but when we woke up on Saturday morning, there were three. Nobody knew where the third one came from — and nobody wanted to be the first one to unzip it."
+    },
+    {
+      "id": 4,
+      "emoji": "🍄",
+      "theme": "Mario",
+      "title": "The Plumber at the Door",
+      "opening": "The knock at the door came at 7:43 in the morning, which was weird because we weren't expecting anyone. Standing on our front porch, breathing hard and covered in what looked like mushroom dust, was a short man in a red hat who said, \"Please — I don't have much time.\""
+    },
+    {
+      "id": 5,
+      "emoji": "🖨️",
+      "theme": "3D Printing",
+      "title": "Print Error",
+      "opening": "The instruction manual for the printer said it could make anything, but I figured that was just the kind of thing companies put on boxes to sound cool. Then I typed in \"cheeseburger,\" hit print, and thirty seconds later heard something sizzling on the output tray."
+    },
+    {
+      "id": 6,
+      "emoji": "📖",
+      "theme": "Reading",
+      "title": "Page 247",
+      "opening": "I had read the book four times before, so I knew exactly what was supposed to happen on page 247 — which is why I nearly fell out of my chair when the words on the page suddenly rearranged themselves and spelled out: \"We've been waiting for you.\" Before I could slam it shut, the light coming off the pages turned bright gold and warm, like stepping into sunshine."
+    },
+    {
+      "id": 7,
+      "emoji": "🧱",
+      "theme": "LEGO",
+      "title": "Set Number Zero",
+      "opening": "The package arrived with no return address, no shipping label, and no explanation — just a plain brown box with my name written on it in red marker. Inside was a LEGO set unlike anything I'd ever seen, with pieces in colors that don't exist in any set I've ever owned, and an instruction booklet that had my face on the cover."
+    },
+    {
+      "id": 8,
+      "emoji": "🎮",
+      "theme": "Nintendo",
+      "title": "Player Three",
+      "opening": "My sister and I were playing two-player mode when a third controller — one that had been sitting dead in the drawer for years — lit up on its own and joined the game. Whatever was playing as Player Three was very, very good."
+    },
+    {
+      "id": 9,
+      "emoji": "👾",
+      "theme": "Final Boss",
+      "title": "The Other Side",
+      "opening": "Everyone thinks being the final boss is all dark lairs and evil laughs, but honestly the hardest part of my day is the 8 a.m. staff meeting where I have to listen to my henchmen complain about the break room. Today, though, the alarm system went off at noon, which could only mean one thing: the hero had finally made it past Level 11."
+    },
+    {
+      "id": 10,
+      "emoji": "🐕",
+      "theme": "Family Adventure",
+      "title": "Gone in Six Seconds",
+      "opening": "My sister had been the one to leave the front door open — she'll never admit it, but I have witnesses — and within six seconds our dog had bolted down the driveway, rounded the corner, and completely disappeared. What happened next is the kind of story my parents still don't fully believe, even though we came home with proof."
+    }
+  ]
+}
