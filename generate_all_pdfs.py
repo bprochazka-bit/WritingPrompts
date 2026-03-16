@@ -105,31 +105,29 @@ def find_image_for_prompt(folder, prompt_id):
     return None
 
 
-def ensure_portrait(img_path, folder, prompt, mode="background"):
-    """If the image is landscape, regenerate it as portrait via DALL-E 3.
-
-    Reads the API key from the 'api_key' file in BASE.
-    Returns the (possibly updated) image path.
-    """
-    img = Image.open(img_path)
-    iw, ih = img.size
-    img.close()
-    if iw <= ih:
-        return img_path
-
+def _get_openai_client():
+    """Read API key from the api_key file and return an OpenAI client, or None."""
     api_key_path = os.path.join(BASE, "api_key")
     if not os.path.exists(api_key_path):
-        print(f"    [WARN] {os.path.basename(img_path)} is landscape but no api_key file found — skipping regeneration")
-        return img_path
-
+        print(f"    [WARN] No api_key file found — skipping image generation")
+        return None
     with open(api_key_path, "r") as f:
         api_key = f.read().strip()
     if not api_key:
-        print(f"    [WARN] api_key file is empty — skipping regeneration")
-        return img_path
-
+        print(f"    [WARN] api_key file is empty — skipping image generation")
+        return None
     from openai import OpenAI
-    client = OpenAI(api_key=api_key)
+    return OpenAI(api_key=api_key)
+
+
+def _generate_image(dest_path, prompt, mode="background"):
+    """Generate a portrait image via DALL-E 3 and save to dest_path.
+
+    Returns True on success, False on failure.
+    """
+    client = _get_openai_client()
+    if not client:
+        return False
 
     raw_prompt = prompt.get("prompt", "")
     if mode == "silly":
@@ -140,7 +138,7 @@ def ensure_portrait(img_path, folder, prompt, mode="background"):
             f"The inspiration is '{raw_prompt}'"
         )
 
-    print(f"    [REGEN] Regenerating {os.path.basename(img_path)} as portrait...")
+    print(f"    [REGEN] Generating {os.path.basename(dest_path)} as portrait...")
     try:
         response = client.images.generate(
             model="dall-e-3",
@@ -151,12 +149,41 @@ def ensure_portrait(img_path, folder, prompt, mode="background"):
             n=1,
         )
         image_url = response.data[0].url
-        urllib.request.urlretrieve(image_url, img_path)
-        print(f"    [REGEN] Saved portrait image to {img_path}")
+        urllib.request.urlretrieve(image_url, dest_path)
+        print(f"    [REGEN] Saved portrait image to {dest_path}")
         time.sleep(2)
+        return True
     except Exception as e:
-        print(f"    [ERROR] Regeneration failed: {e}")
+        print(f"    [ERROR] Image generation failed: {e}")
+        return False
 
+
+def ensure_image(img_path, folder, prompt, mode="background"):
+    """Ensure a portrait image exists at img_path.
+
+    - If the file doesn't exist, generate it via DALL-E 3.
+    - If the file exists but is landscape, regenerate it as portrait.
+    - Returns the image path, or None if generation failed and no file exists.
+    """
+    if img_path is None:
+        img_dir = os.path.join(BASE, folder)
+        title = prompt.get("title", f"prompt_{prompt['id']}")
+        safe_title = "".join(c if c.isalnum() or c in (" ", "_", "-") else "" for c in title)
+        safe_title = safe_title.strip().replace(" ", "")[:30]
+        img_path = os.path.join(img_dir, f"{prompt['id']}-{safe_title}.png")
+        print(f"    [MISSING] Image not found, will generate: {os.path.basename(img_path)}")
+        if not _generate_image(img_path, prompt, mode):
+            return None
+        return img_path
+
+    img = Image.open(img_path)
+    iw, ih = img.size
+    img.close()
+    if iw <= ih:
+        return img_path
+
+    print(f"    [LANDSCAPE] {os.path.basename(img_path)} is landscape, regenerating...")
+    _generate_image(img_path, prompt, mode)
     return img_path
 
 
@@ -191,10 +218,9 @@ def _cover_page_sort_key(path):
 def draw_writing_prompt_page(c, prompt):
     """Writing prompt: image background with text overlay and drop shadow."""
     img_path = find_image_for_prompt("writing-prompts", prompt["id"])
+    img_path = ensure_image(img_path, "writing-prompts", prompt, mode="background")
     if not img_path:
         return
-
-    img_path = ensure_portrait(img_path, "writing-prompts", prompt, mode="background")
 
     img = Image.open(img_path)
     iw, ih = img.size
@@ -238,10 +264,9 @@ def draw_writing_prompt_page(c, prompt):
 def draw_silly_scene_page(c, prompt):
     """Silly scene: just the image, full page."""
     img_path = find_image_for_prompt("silly-scene-prompts", prompt["id"])
+    img_path = ensure_image(img_path, "silly-scene-prompts", prompt, mode="silly")
     if not img_path:
         return
-
-    img_path = ensure_portrait(img_path, "silly-scene-prompts", prompt, mode="silly")
 
     img = Image.open(img_path)
     iw, ih = img.size
