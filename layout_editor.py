@@ -177,34 +177,36 @@ def api_generate_pdf():
         c.rect(0, 0, pw, ph, fill=1, stroke=0)
 
         # Title box (coordinates are fractions 0-1 from top-left)
+        # SVG places first baseline at: box_top + fontSize + pad (8px)
+        # PDF Y is flipped: pdf_y = ph - svg_y
         tb = layout["title_box"]
         tx = tb["x"] * pw
         tw = tb["w"] * pw
-        t_top_pdf = ph - tb["y"] * ph
         title_font = "LibSansBold"
         title_size = layout.get("title_size", 34)
         title_align = layout.get("title_align", "left")
         title_text = layout.get("title_text", prompt["title"])
-        y = t_top_pdf
+        line_h = title_size + 8
+        # First baseline in SVG coords: tb["y"]*ph + title_size + 8
+        y = ph - (tb["y"] * ph + title_size + 8)
         for line in wrap_text(c, title_text, title_font, title_size, tw):
             draw_text_with_shadow(c, line, tx, y, title_font, title_size,
                                   shadow_offset=3, align=title_align, box_w=tw)
-            y -= title_size + 8
+            y -= title_size * 1.25
 
         # Body box
         bb = layout["body_box"]
         bx = bb["x"] * pw
         bw = bb["w"] * pw
-        b_top_pdf = ph - bb["y"] * ph
         body_font = "LibSans"
         body_size = layout.get("body_size", 21)
         body_align = layout.get("body_align", "left")
         body_text = layout.get("body_text", prompt["prompt"])
-        y = b_top_pdf
+        y = ph - (bb["y"] * ph + body_size + 8)
         for line in wrap_text(c, body_text, body_font, body_size, bw):
             draw_text_with_shadow(c, line, bx, y, body_font, body_size,
                                   shadow_offset=2, align=body_align, box_w=bw)
-            y -= body_size + 7
+            y -= body_size * 1.25
 
         c.showPage()
 
