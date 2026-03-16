@@ -41,11 +41,11 @@ def _load_prompts():
         return json.load(f)
 
 
-def _img_geometry(iw, ih):
+def _img_geometry(iw, ih, pw=PW, ph=PH):
     """Compute how the image covers the page. Returns (drawW, drawH, extraX, extraY)."""
-    scale = max(PW / iw, PH / ih)
+    scale = max(pw / iw, ph / ih)
     dw, dh = iw * scale, ih * scale
-    return dw, dh, dw - PW, dh - PH
+    return dw, dh, dw - pw, dh - ph
 
 
 def _esc(s):
@@ -72,12 +72,12 @@ def _wrap_text_svg(text, font_size, max_width, is_bold):
 
 
 def _build_text_svg(text, box, font_size, is_bold, align, text_color,
-                    shadow_color, shadow_dx, shadow_dy):
+                    shadow_color, shadow_dx, shadow_dy, pw=PW, ph=PH):
     """Generate SVG elements for a text box (no box background, just text + shadow)."""
-    x = box["x"] * PW
-    y_top = box["y"] * PH
-    w = box["w"] * PW
-    h = box["h"] * PH
+    x = box["x"] * pw
+    y_top = box["y"] * ph
+    w = box["w"] * pw
+    h = box["h"] * ph
     pad = 8
     line_h = font_size * 1.25
 
@@ -120,19 +120,29 @@ def build_page_svg(layout, prompt, img_src, editor_mode=False):
     """Build the SVG for one page.
 
     img_src: image URL or file:// path
-    editor_mode: if True, adds drag handles, selection UI, margin guides
+    editor_mode: if True, uses unitless width/height for browser scaling;
+                 if False (PDF), uses 'pt' units so cairosvg produces correct page size.
     """
+    pw = layout.get("page_w", PW)
+    ph = layout.get("page_h", PH)
     iw = layout.get("img_w", 0)
     ih = layout.get("img_h", 0)
     overlay = layout.get("overlay_opacity", 0.45)
 
-    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" '
-           f'width="{PW}" height="{PH}" viewBox="0 0 {PW} {PH}">\n')
-    svg += f'<defs><clipPath id="page-clip"><rect x="0" y="0" width="{PW}" height="{PH}"/></clipPath></defs>\n'
+    if editor_mode:
+        # Browser: unitless dims get scaled via CSS; viewBox controls coordinate space
+        svg = (f'<svg xmlns="http://www.w3.org/2000/svg" '
+               f'viewBox="0 0 {pw} {ph}">\n')
+    else:
+        # PDF: explicit 'pt' units so cairosvg produces the correct page size
+        svg = (f'<svg xmlns="http://www.w3.org/2000/svg" '
+               f'width="{pw}pt" height="{ph}pt" viewBox="0 0 {pw} {ph}">\n')
+
+    svg += f'<defs><clipPath id="page-clip"><rect x="0" y="0" width="{pw}" height="{ph}"/></clipPath></defs>\n'
 
     # Background image
     if img_src and iw and ih:
-        dw, dh, ex, ey = _img_geometry(iw, ih)
+        dw, dh, ex, ey = _img_geometry(iw, ih, pw, ph)
         ox = layout.get("img_offset_x", 0.5)
         oy = layout.get("img_offset_y", 0.5)
         img_x = -ex * ox
@@ -141,16 +151,16 @@ def build_page_svg(layout, prompt, img_src, editor_mode=False):
         svg += (f'<image href="{img_src}" x="{img_x}" y="{img_y}" '
                 f'width="{dw}" height="{dh}" preserveAspectRatio="none"/>\n')
         svg += '</g>\n'
-        svg += f'<rect x="0" y="0" width="{PW}" height="{PH}" fill="rgba(0,0,0,{overlay})"/>\n'
+        svg += f'<rect x="0" y="0" width="{pw}" height="{ph}" fill="rgba(0,0,0,{overlay})"/>\n'
 
     # Editor-only: clickable background for panning
     if editor_mode and img_src:
-        svg += (f'<rect class="bg-drag" x="0" y="0" width="{PW}" height="{PH}" '
+        svg += (f'<rect class="bg-drag" x="0" y="0" width="{pw}" height="{ph}" '
                 f'fill="transparent" style="cursor: grab;"/>\n')
 
-    # Editor-only: margin guides
+    # Editor-only: margin guides (1" = 72pt)
     if editor_mode:
-        svg += (f'<rect x="72" y="72" width="{PW - 144}" height="{PH - 144}" '
+        svg += (f'<rect x="72" y="72" width="{pw - 144}" height="{ph - 144}" '
                 f'fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="0.5" '
                 f'stroke-dasharray="4 4"/>\n')
 
@@ -169,6 +179,7 @@ def build_page_svg(layout, prompt, img_src, editor_mode=False):
         True,
         layout.get("title_align", "left"),
         title_color, shadow_color, shadow_dx, shadow_dy,
+        pw, ph,
     )
 
     # Body text
@@ -179,6 +190,7 @@ def build_page_svg(layout, prompt, img_src, editor_mode=False):
         False,
         layout.get("body_align", "left"),
         body_color, shadow_color, shadow_dx, shadow_dy,
+        pw, ph,
     )
 
     svg += '</svg>'
@@ -373,6 +385,16 @@ body { font-family: 'Liberation Sans', Arial, sans-serif; background: #1a1a2e; c
       <label>dy: <input type="number" id="shadow-dy" value="2" min="-10" max="10" onchange="onShadowChange()"></label>
       <span class="sep"></span>
       <label>Overlay: <input type="number" id="overlay-opacity" value="45" min="0" max="100" step="5" onchange="onOverlayChange()">%</label>
+      <span class="sep"></span>
+      <label>Page:
+        <select id="page-size" onchange="setPageSize(this.value)">
+          <option value="letter" selected>Letter (8.5x11)</option>
+          <option value="a4">A4</option>
+          <option value="legal">Legal (8.5x14)</option>
+          <option value="tabloid">Tabloid (11x17)</option>
+          <option value="a5">A5</option>
+        </select>
+      </label>
       <span class="spacer"></span>
       <span class="status" id="status">Drag background to pan image</span>
       <button class="btn-success" id="generate-btn" onclick="generatePDF()">Generate PDF</button>
@@ -401,13 +423,37 @@ let currentIdx = 0;
 let layouts = {};
 let selectedBox = null;
 
-const PW = 612, PH = 792;
-const MARGIN_FRAC = 72 / 612;
+// Page sizes in points (72pt = 1 inch)
+const PAGE_SIZES = {
+    "letter":  [612, 792],    // 8.5 x 11
+    "legal":   [612, 1008],   // 8.5 x 14
+    "tabloid": [792, 1224],   // 11 x 17
+    "a4":      [595, 842],    // 210 x 297 mm
+    "a5":      [420, 595],    // 148 x 210 mm
+};
+let pageSizeKey = "letter";
+let PW = 612, PH = 792;
 let displayScale = 1;
 
+function setPageSize(key) {
+    pageSizeKey = key;
+    [PW, PH] = PAGE_SIZES[key];
+    // Update all layouts with new page dims
+    for (const id in layouts) {
+        layouts[id].page_w = PW;
+        layouts[id].page_h = PH;
+    }
+    renderPage();
+}
+
+function marginFrac() { return 72 / PW; }
+
 function defaultLayout(prompt) {
+    const mf = marginFrac();
     return {
         id: prompt.id,
+        page_w: PW,
+        page_h: PH,
         title_size: 34,
         body_size: 21,
         title_align: "left",
@@ -424,8 +470,8 @@ function defaultLayout(prompt) {
         img_offset_y: 0.5,
         img_w: prompt.img_w,
         img_h: prompt.img_h,
-        title_box: { x: MARGIN_FRAC, y: 0.08, w: 1 - 2 * MARGIN_FRAC, h: 0.18 },
-        body_box:  { x: MARGIN_FRAC, y: 0.30, w: 1 - 2 * MARGIN_FRAC, h: 0.55 },
+        title_box: { x: mf, y: 0.08, w: 1 - 2 * mf, h: 0.18 },
+        body_box:  { x: mf, y: 0.30, w: 1 - 2 * mf, h: 0.55 },
     };
 }
 
@@ -506,6 +552,7 @@ function updateToolbar() {
     document.getElementById("shadow-dx").value = L.shadow_dx;
     document.getElementById("shadow-dy").value = L.shadow_dy;
     document.getElementById("overlay-opacity").value = Math.round(L.overlay_opacity * 100);
+    document.getElementById("page-size").value = pageSizeKey;
     document.querySelectorAll(".align-btn").forEach(btn => {
         btn.classList.toggle("active", L[btn.dataset.target + "_align"] === btn.dataset.align);
     });
