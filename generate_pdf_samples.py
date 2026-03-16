@@ -285,6 +285,9 @@ def find_blank_regions(img, block_size=32, std_threshold=35, max_regions=3):
     return regions
 
 
+MARGIN = 1.0 * inch  # 1" margin for print safety
+
+
 def _pixel_to_pdf(region, iw, ih, scale, x_off, y_off):
     """Convert an image-pixel (x, y, w, h) rect to PDF coords (x, y_bottom, w, h)."""
     rx, ry, rw, rh = region
@@ -295,20 +298,21 @@ def _pixel_to_pdf(region, iw, ih, scale, x_off, y_off):
     return (pdf_x, pdf_y, pdf_w, pdf_h)
 
 
-def _clamp_region(pdf_x, pdf_y, pdf_w, pdf_h, pw, ph, pad=None):
-    """Clamp a PDF region to page boundaries with padding. Returns (x, y_top, usable_w, y_bottom)."""
-    if pad is None:
-        pad = 0.3 * inch
-    margin = 0.4 * inch
-    x = max(pdf_x + pad, margin)
-    right = min(pdf_x + pdf_w - pad, pw - margin)
-    top = min(pdf_y + pdf_h - pad, ph - margin)
-    bottom = max(pdf_y + pad, margin)
-    return (x, top, right - x, bottom)
+def _region_vertical_span(pdf_region, ph):
+    """Extract clamped vertical span (top, bottom) from a PDF region."""
+    _, pdf_y, _, pdf_h = pdf_region
+    top = min(pdf_y + pdf_h, ph - MARGIN)
+    bottom = max(pdf_y, MARGIN)
+    return (top, bottom)
 
 
 def draw_writing_prompt_page(c, prompt):
-    """Writing prompt: image background with text overlay in detected blank region(s)."""
+    """Writing prompt: image background with text overlay in detected blank region(s).
+
+    Text always uses full page width (1" margins) for readability.
+    The blank region detection controls *vertical* placement only.
+    If two large regions exist, title goes in one and body in the other.
+    """
     img_path = find_image_for_prompt("writing-prompts", prompt["id"])
     img_path = ensure_image(img_path, "writing-prompts", prompt, mode="background")
     if not img_path:
@@ -329,72 +333,74 @@ def draw_writing_prompt_page(c, prompt):
     c.setFillColor(Color(0, 0, 0, 0.45))
     c.rect(0, 0, pw, ph, fill=1, stroke=0)
 
-    # Detect blank regions
-    regions = find_blank_regions(img)
-    pdf_regions = [_pixel_to_pdf(r, iw, ih, scale, x_off, y_off) for r in regions]
+    # Text always uses full page width with 1" margins
+    text_x = MARGIN
+    usable_w = pw - 2 * MARGIN
 
     title_font = "LibSansBold"
     title_size = 34
     prompt_font = "LibSans"
     prompt_size = 21
 
-    # Filter to regions large enough for text (>= 3in wide, >= 1.5in tall)
-    min_w = 3.0 * inch
-    min_h = 1.5 * inch
-    usable_regions = [r for r in pdf_regions if r[2] >= min_w and r[3] >= min_h]
+    # Detect blank regions and convert to PDF coordinates
+    regions = find_blank_regions(img)
+    pdf_regions = [_pixel_to_pdf(r, iw, ih, scale, x_off, y_off) for r in regions]
+
+    # Filter to regions tall enough to be meaningful (>= 2in tall, >= 40% page width)
+    min_h = 2.0 * inch
+    min_w = pw * 0.4
+    usable_regions = [r for r in pdf_regions if r[3] >= min_h and r[2] >= min_w]
 
     if len(usable_regions) >= 2:
-        # Two good regions: wider one for title, largest remaining for body
-        by_width = sorted(usable_regions, key=lambda r: r[2], reverse=True)
-        title_region = by_width[0]
+        # Two good regions — use vertical position to split title vs body.
+        # The higher region gets the title, the lower gets the body.
+        by_top = sorted(usable_regions, key=lambda r: r[1] + r[3], reverse=True)
+        title_region = by_top[0]  # higher on page (larger PDF y)
         remaining = [r for r in usable_regions if r is not title_region]
         body_region = max(remaining, key=lambda r: r[2] * r[3])
 
-        tx, t_top, t_usable, t_bottom = _clamp_region(*title_region, pw, ph)
-        bx, b_top, b_usable, b_bottom = _clamp_region(*body_region, pw, ph)
+        t_top, _ = _region_vertical_span(title_region, ph)
+        b_top, _ = _region_vertical_span(body_region, ph)
 
-        # Title in the wider region
+        # Title in the higher region
         y = t_top
-        title_lines = wrap_text(c, prompt["title"], title_font, title_size, t_usable)
+        title_lines = wrap_text(c, prompt["title"], title_font, title_size, usable_w)
         for line in title_lines:
-            draw_text_with_shadow(c, line, tx, y, title_font, title_size, shadow_offset=3)
+            draw_text_with_shadow(c, line, text_x, y, title_font, title_size, shadow_offset=3)
             y -= title_size + 8
 
         # Body in the other region (overflow is OK — always render all lines)
         y = b_top
-        prompt_lines = wrap_text(c, prompt["prompt"], prompt_font, prompt_size, b_usable)
+        prompt_lines = wrap_text(c, prompt["prompt"], prompt_font, prompt_size, usable_w)
         for line in prompt_lines:
-            draw_text_with_shadow(c, line, bx, y, prompt_font, prompt_size, shadow_offset=2)
+            draw_text_with_shadow(c, line, text_x, y, prompt_font, prompt_size, shadow_offset=2)
             y -= prompt_size + 7
 
     else:
-        # Single usable region (or none) — title + body together
+        # Single region or none — title + body together
         if usable_regions:
-            tx, t_top, usable, t_bottom = _clamp_region(*usable_regions[0], pw, ph)
+            t_top, _ = _region_vertical_span(usable_regions[0], ph)
         elif pdf_regions:
-            # Best we have, even if small — clamp to page
-            tx, t_top, usable, t_bottom = _clamp_region(*pdf_regions[0], pw, ph)
+            t_top, _ = _region_vertical_span(pdf_regions[0], ph)
         else:
-            # No blank region found — full page fallback
-            margin = 0.75 * inch
-            tx = margin
-            usable = pw - 2 * margin
-            t_top = ph - 1.2 * inch
-            t_bottom = margin
+            t_top = ph - MARGIN
+
+        # Clamp: never start above the 1" margin from top
+        t_top = min(t_top, ph - MARGIN)
 
         # Title
         y = t_top
-        title_lines = wrap_text(c, prompt["title"], title_font, title_size, usable)
+        title_lines = wrap_text(c, prompt["title"], title_font, title_size, usable_w)
         for line in title_lines:
-            draw_text_with_shadow(c, line, tx, y, title_font, title_size, shadow_offset=3)
+            draw_text_with_shadow(c, line, text_x, y, title_font, title_size, shadow_offset=3)
             y -= title_size + 8
 
         y -= 20
 
         # Body — always render all lines (overflow past region is OK)
-        prompt_lines = wrap_text(c, prompt["prompt"], prompt_font, prompt_size, usable)
+        prompt_lines = wrap_text(c, prompt["prompt"], prompt_font, prompt_size, usable_w)
         for line in prompt_lines:
-            draw_text_with_shadow(c, line, tx, y, prompt_font, prompt_size, shadow_offset=2)
+            draw_text_with_shadow(c, line, text_x, y, prompt_font, prompt_size, shadow_offset=2)
             y -= prompt_size + 7
 
 
