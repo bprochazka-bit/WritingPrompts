@@ -18,7 +18,7 @@ import html
 from io import BytesIO
 
 from flask import Flask, request, jsonify, send_file, send_from_directory
-from PIL import Image
+from PIL import Image, ImageFilter
 import cairosvg
 from pypdf import PdfWriter, PdfReader
 
@@ -74,8 +74,11 @@ def _wrap_text_svg(text, font_size, max_width, is_bold):
 
 def _build_text_svg(text, box, font_size, is_bold, align, text_color,
                     shadow_color, shadow_dx, shadow_dy, shadow_blur,
-                    pw=PW, ph=PH, filter_id=""):
-    """Generate SVG elements for a text box (no box background, just text + shadow)."""
+                    pw=PW, ph=PH, filter_id="", layer=None):
+    """Generate SVG elements for a text box (no box background, just text + shadow).
+
+    layer: None = everything, "shadow_only" = only shadow, "no_shadow" = only main text.
+    """
     x = box["x"] * pw
     y_top = box["y"] * ph
     w = box["w"] * pw
@@ -99,8 +102,8 @@ def _build_text_svg(text, box, font_size, is_bold, align, text_color,
     svg = ""
 
     # Shadow pass (optionally blurred)
-    if has_shadow:
-        if shadow_blur and filter_id:
+    if has_shadow and layer != "no_shadow":
+        if shadow_blur and filter_id and layer != "shadow_only":
             svg += f'<g filter="url(#{filter_id})">\n'
         ty = y_top + font_size + pad
         for line in lines:
@@ -113,30 +116,35 @@ def _build_text_svg(text, box, font_size, is_bold, align, text_color,
                     f'text-anchor="{anchor}" fill="{shadow_color}">'
                     f'{escaped}</text>\n')
             ty += line_h
-        if shadow_blur and filter_id:
+        if shadow_blur and filter_id and layer != "shadow_only":
             svg += '</g>\n'
 
     # Main text pass
-    ty = y_top + font_size + pad
-    for line in lines:
-        if ty > y_top + h - 4:
-            break
-        escaped = _esc(line)
-        svg += (f'<text x="{tx}" y="{ty}" '
-                f'font-size="{font_size}" font-weight="{weight}" '
-                f'font-family="Liberation Sans, Arial, sans-serif" '
-                f'text-anchor="{anchor}" fill="{text_color}">'
-                f'{escaped}</text>\n')
-        ty += line_h
+    if layer != "shadow_only":
+        ty = y_top + font_size + pad
+        for line in lines:
+            if ty > y_top + h - 4:
+                break
+            escaped = _esc(line)
+            svg += (f'<text x="{tx}" y="{ty}" '
+                    f'font-size="{font_size}" font-weight="{weight}" '
+                    f'font-family="Liberation Sans, Arial, sans-serif" '
+                    f'text-anchor="{anchor}" fill="{text_color}">'
+                    f'{escaped}</text>\n')
+            ty += line_h
     return svg
 
 
-def build_page_svg(layout, prompt, img_src, editor_mode=False):
+def build_page_svg(layout, prompt, img_src, editor_mode=False, layer=None):
     """Build the SVG for one page.
 
     img_src: image URL or file:// path
     editor_mode: if True, uses unitless width/height for browser scaling;
                  if False (PDF), uses 'pt' units so cairosvg produces correct page size.
+    layer: None = everything, "shadow_only" = only shadow text (transparent bg),
+           "no_shadow" = everything except shadow text,
+           "bg_only" = background + overlay only (no text),
+           "text_only" = main text only (no shadow, no bg).
     """
     pw = layout.get("page_w", PW)
     ph = layout.get("page_h", PH)
@@ -165,8 +173,8 @@ def build_page_svg(layout, prompt, img_src, editor_mode=False):
                  f'<feGaussianBlur in="SourceGraphic" stdDeviation="{body_blur}"/></filter>\n')
     svg += f'<defs>{defs}</defs>\n'
 
-    # Background image
-    if img_src and iw and ih:
+    # Background image (skip for shadow_only and text_only layers)
+    if img_src and iw and ih and layer not in ("shadow_only", "text_only"):
         dw, dh, ex, ey = _img_geometry(iw, ih, pw, ph)
         ox = layout.get("img_offset_x", 0.5)
         oy = layout.get("img_offset_y", 0.5)
@@ -189,41 +197,45 @@ def build_page_svg(layout, prompt, img_src, editor_mode=False):
                 f'fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="0.5" '
                 f'stroke-dasharray="4 4"/>\n')
 
-    # Text settings (per-element shadow)
-    title_color = layout.get("title_color", "#ffffff")
-    body_color = layout.get("body_color", "#ffffff")
+    # Text (skip entirely for bg_only layer)
+    if layer != "bg_only":
+        title_color = layout.get("title_color", "#ffffff")
+        body_color = layout.get("body_color", "#ffffff")
+        text_layer = "no_shadow" if layer == "text_only" else layer
 
-    # Title text
-    svg += _build_text_svg(
-        layout.get("title_text", prompt["title"]),
-        layout["title_box"],
-        layout.get("title_size", 34),
-        True,
-        layout.get("title_align", "left"),
-        title_color,
-        layout.get("title_shadow_color", "#000000"),
-        layout.get("title_shadow_dx", 2),
-        layout.get("title_shadow_dy", 2),
-        title_blur,
-        pw, ph,
-        "title-blur" if title_blur > 0 else "",
-    )
+        # Title text
+        svg += _build_text_svg(
+            layout.get("title_text", prompt["title"]),
+            layout["title_box"],
+            layout.get("title_size", 34),
+            True,
+            layout.get("title_align", "left"),
+            title_color,
+            layout.get("title_shadow_color", "#000000"),
+            layout.get("title_shadow_dx", 2),
+            layout.get("title_shadow_dy", 2),
+            title_blur,
+            pw, ph,
+            "title-blur" if title_blur > 0 else "",
+            layer=text_layer,
+        )
 
-    # Body text
-    svg += _build_text_svg(
-        layout.get("body_text", prompt["prompt"]),
-        layout["body_box"],
-        layout.get("body_size", 21),
-        False,
-        layout.get("body_align", "left"),
-        body_color,
-        layout.get("body_shadow_color", "#000000"),
-        layout.get("body_shadow_dx", 2),
-        layout.get("body_shadow_dy", 2),
-        body_blur,
-        pw, ph,
-        "body-blur" if body_blur > 0 else "",
-    )
+        # Body text
+        svg += _build_text_svg(
+            layout.get("body_text", prompt["prompt"]),
+            layout["body_box"],
+            layout.get("body_size", 21),
+            False,
+            layout.get("body_align", "left"),
+            body_color,
+            layout.get("body_shadow_color", "#000000"),
+            layout.get("body_shadow_dx", 2),
+            layout.get("body_shadow_dy", 2),
+            body_blur,
+            pw, ph,
+            "body-blur" if body_blur > 0 else "",
+            layer=text_layer,
+        )
 
     svg += '</svg>'
     return svg
@@ -299,23 +311,62 @@ def api_generate_pdf():
         layout["img_w"] = img.size[0]
         layout["img_h"] = img.size[1]
 
-        svg_str = build_page_svg(layout, prompt, img_src, editor_mode=False)
-
         has_blur = (layout.get("title_shadow_blur", 0) > 0 or
                     layout.get("body_shadow_blur", 0) > 0)
 
         if has_blur:
-            # cairosvg ignores feGaussianBlur in direct SVG->PDF.
-            # Workaround: render SVG -> PNG at high DPI, then embed in PDF.
+            # cairosvg does NOT support feGaussianBlur at all (not even in
+            # svg2png).  Workaround: render three layers separately, blur
+            # the shadow layer with Pillow, composite, then embed the
+            # rasterised result in the PDF.
             pw = layout.get("page_w", PW)
             ph = layout.get("page_h", PH)
-            png_buf = BytesIO()
-            cairosvg.svg2png(bytestring=svg_str.encode("utf-8"),
-                             write_to=png_buf, unsafe=True, dpi=PDF_DPI)
-            png_buf.seek(0)
+            scale = PDF_DPI / 72  # pt → px conversion factor
 
-            # Build a simple SVG that embeds the rasterized PNG at page size
-            png_b64 = base64.b64encode(png_buf.read()).decode("ascii")
+            # 1. Background + overlay (no text)
+            bg_svg = build_page_svg(layout, prompt, img_src,
+                                    editor_mode=False, layer="bg_only")
+            bg_buf = BytesIO()
+            cairosvg.svg2png(bytestring=bg_svg.encode("utf-8"),
+                             write_to=bg_buf, unsafe=True, dpi=PDF_DPI)
+            bg_buf.seek(0)
+            bg_img = Image.open(bg_buf).convert("RGBA")
+
+            # 2. Shadow text only (transparent background)
+            shadow_svg = build_page_svg(layout, prompt, img_src,
+                                        editor_mode=False, layer="shadow_only")
+            shadow_buf = BytesIO()
+            cairosvg.svg2png(bytestring=shadow_svg.encode("utf-8"),
+                             write_to=shadow_buf, unsafe=True, dpi=PDF_DPI)
+            shadow_buf.seek(0)
+            shadow_img = Image.open(shadow_buf).convert("RGBA")
+
+            # 3. Main text only (transparent background, no shadows)
+            text_svg = build_page_svg(layout, prompt, img_src,
+                                      editor_mode=False, layer="text_only")
+            text_buf = BytesIO()
+            cairosvg.svg2png(bytestring=text_svg.encode("utf-8"),
+                             write_to=text_buf, unsafe=True, dpi=PDF_DPI)
+            text_buf.seek(0)
+            text_img = Image.open(text_buf).convert("RGBA")
+
+            # 4. Apply Gaussian blur to the shadow layer with Pillow.
+            #    SVG stdDeviation is in pt; convert to pixels at render DPI.
+            title_b = layout.get("title_shadow_blur", 0)
+            body_b = layout.get("body_shadow_blur", 0)
+            pil_radius = max(title_b, body_b) * scale
+            shadow_img = shadow_img.filter(
+                ImageFilter.GaussianBlur(radius=pil_radius))
+
+            # 5. Composite: background → blurred shadow → main text
+            composite = Image.alpha_composite(bg_img, shadow_img)
+            composite = Image.alpha_composite(composite, text_img)
+
+            # 6. Embed composite PNG in PDF via SVG wrapper
+            comp_buf = BytesIO()
+            composite.save(comp_buf, format="PNG")
+            comp_buf.seek(0)
+            png_b64 = base64.b64encode(comp_buf.read()).decode("ascii")
             wrapper_svg = (
                 f'<svg xmlns="http://www.w3.org/2000/svg" '
                 f'xmlns:xlink="http://www.w3.org/1999/xlink" '
@@ -326,9 +377,10 @@ def api_generate_pdf():
             )
             pdf_buf = BytesIO()
             cairosvg.svg2pdf(bytestring=wrapper_svg.encode("utf-8"),
-                             write_to=pdf_buf)
+                             write_to=pdf_buf, unsafe=True)
         else:
             # No blur — direct SVG-to-PDF preserves vector text
+            svg_str = build_page_svg(layout, prompt, img_src, editor_mode=False)
             pdf_buf = BytesIO()
             cairosvg.svg2pdf(bytestring=svg_str.encode("utf-8"),
                              write_to=pdf_buf, unsafe=True)
