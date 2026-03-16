@@ -22,6 +22,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.utils import ImageReader
 from PIL import Image
+import numpy as np
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 WIDTH, HEIGHT = letter  # 612 x 792 points
@@ -222,8 +223,61 @@ def _cover_page_sort_key(path):
     return 0  # cover_page.png (no number) comes first
 
 
+def find_blank_region(img, block_size=32, std_threshold=35, min_blocks_w=6, min_blocks_h=6):
+    """Find the largest low-variance rectangular region in an image.
+
+    Divides the image into a grid of blocks, computes the standard deviation
+    of each block, and finds the largest rectangle where all blocks are below
+    the threshold (i.e. relatively uniform / blank).
+
+    Returns (x, y, w, h) in pixel coordinates, or None if no suitable region found.
+    """
+    gray = np.array(img.convert("L"), dtype=np.float32)
+    ih, iw = gray.shape
+    rows = ih // block_size
+    cols = iw // block_size
+
+    # Build a boolean grid: True = low variance (blank)
+    grid = np.zeros((rows, cols), dtype=bool)
+    for r in range(rows):
+        for c_idx in range(cols):
+            block = gray[r * block_size:(r + 1) * block_size,
+                         c_idx * block_size:(c_idx + 1) * block_size]
+            grid[r, c_idx] = np.std(block) < std_threshold
+
+    # Find the largest rectangle of True values using the histogram approach
+    best_area = 0
+    best_rect = None  # (row, col, height, width) in grid units
+
+    # For each row, compute the height of consecutive True values above
+    heights = np.zeros(cols, dtype=int)
+    for r in range(rows):
+        for c_idx in range(cols):
+            heights[c_idx] = heights[c_idx] + 1 if grid[r, c_idx] else 0
+
+        # Largest rectangle in histogram
+        stack = []
+        for c_idx in range(cols + 1):
+            h = heights[c_idx] if c_idx < cols else 0
+            while stack and heights[stack[-1]] > h:
+                height = heights[stack.pop()]
+                width = c_idx if not stack else c_idx - stack[-1] - 1
+                if height >= min_blocks_h and width >= min_blocks_w:
+                    area = height * width
+                    if area > best_area:
+                        best_area = area
+                        best_rect = (r - height + 1, c_idx - width, height, width)
+            stack.append(c_idx)
+
+    if best_rect is None:
+        return None
+
+    gr, gc, gh, gw = best_rect
+    return (gc * block_size, gr * block_size, gw * block_size, gh * block_size)
+
+
 def draw_writing_prompt_page(c, prompt):
-    """Writing prompt: image background with text overlay and drop shadow."""
+    """Writing prompt: image background with text overlay in detected blank region."""
     img_path = find_image_for_prompt("writing-prompts", prompt["id"])
     img_path = ensure_image(img_path, "writing-prompts", prompt, mode="background")
     if not img_path:
@@ -245,16 +299,40 @@ def draw_writing_prompt_page(c, prompt):
     c.setFillColor(Color(0, 0, 0, 0.45))
     c.rect(0, 0, pw, ph, fill=1, stroke=0)
 
-    margin = 0.75 * inch
-    usable = pw - 2 * margin
+    # Detect blank region in the image
+    region = find_blank_region(img)
+
+    if region:
+        # Convert image-pixel region to PDF coordinates
+        rx, ry, rw, rh = region
+        # Image pixel -> PDF: scale and offset, then flip Y (PDF origin = bottom-left)
+        pdf_x = x_off + rx * scale
+        pdf_y = y_off + (ih - ry - rh) * scale  # flip Y
+        pdf_w = rw * scale
+        pdf_h = rh * scale
+
+        # Add padding inside the region
+        pad = 0.3 * inch
+        text_x = max(pdf_x + pad, 0.5 * inch)
+        text_w = min(pdf_w - 2 * pad, pw - 1.0 * inch)
+        text_top = pdf_y + pdf_h - pad
+        text_bottom = pdf_y + pad
+    else:
+        # Fallback: use full page with margins
+        text_x = 0.75 * inch
+        text_w = pw - 2 * 0.75 * inch
+        text_top = ph - 1.2 * inch
+        text_bottom = 0.75 * inch
+
+    usable = text_w
 
     # Title
-    y = ph - 1.2 * inch
+    y = text_top
     title_font = "LibSansBold"
     title_size = 34
     title_lines = wrap_text(c, prompt["title"], title_font, title_size, usable)
     for line in title_lines:
-        draw_text_with_shadow(c, line, margin, y, title_font, title_size, shadow_offset=3)
+        draw_text_with_shadow(c, line, text_x, y, title_font, title_size, shadow_offset=3)
         y -= title_size + 8
 
     y -= 20
@@ -264,7 +342,9 @@ def draw_writing_prompt_page(c, prompt):
     prompt_size = 21
     prompt_lines = wrap_text(c, prompt["prompt"], prompt_font, prompt_size, usable)
     for line in prompt_lines:
-        draw_text_with_shadow(c, line, margin, y, prompt_font, prompt_size, shadow_offset=2)
+        if y < text_bottom:
+            break
+        draw_text_with_shadow(c, line, text_x, y, prompt_font, prompt_size, shadow_offset=2)
         y -= prompt_size + 7
 
 
