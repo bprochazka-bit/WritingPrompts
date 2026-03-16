@@ -1,0 +1,76 @@
+{
+  "title": "10 Story Starter Writing Prompts (Revised)",
+  "description": "Writing prompts for a 10-year-old boy. Each prompt includes the first two sentences of a story. Every opening uses a different structure, tone, and story type to ensure unique results. Goal: keep writing for one full page!",
+  "prompts": [
+    {
+      "id": 1,
+      "emoji": "🟩",
+      "theme": "Minecraft",
+      "title": "The Last Night",
+      "opening": "We had exactly one in-game night left to finish the fortress before the server reset forever and everything we'd built for six months would be gone. There were four of us, it was 11:47 p.m. in real life, and someone had just accidentally blown up the front wall with a creeper."
+    },
+    {
+      "id": 2,
+      "emoji": "🐕",
+      "theme": "The Dog",
+      "title": "Exhibit A",
+      "opening": "I want to be clear that I did not make the mess in the kitchen — and I have a witness, even if that witness is currently sitting under the table looking guilty and won't make eye contact. The following is my complete and totally honest account of everything that happened between 3:15 and 3:45 p.m. on Thursday."
+    },
+    {
+      "id": 3,
+      "emoji": "🏕️",
+      "theme": "Cub Scouts",
+      "title": "The Bet",
+      "opening": "It started because Marcus said I couldn't start a fire without matches, and I said I absolutely could, and before any adult heard about it we had shaken hands and the whole troop was watching. The thing nobody tells you about starting a fire with just sticks and a piece of bark is that it takes about forty-five minutes longer than you think it will."
+    },
+    {
+      "id": 4,
+      "emoji": "🍄",
+      "theme": "Mario",
+      "title": "World 9",
+      "opening": "The game had never shown a World 9 before — every walkthrough online, every guide, every speedrun confirmed it: the game ends at World 8. And yet here it was on my screen, a level that no one had ever posted about, with a blinking cursor where the world name should have been and a single coin trail leading into total darkness."
+    },
+    {
+      "id": 5,
+      "emoji": "🖨️",
+      "theme": "3D Printing",
+      "title": "The Note",
+      "opening": "The 3D print had been running overnight, and when I came down in the morning I expected to find the dragon figurine I'd designed — instead the printer had ignored my file completely and produced a small, perfectly formed piece of paper folded into a square. Written on it in tiny raised letters were six words: \"You need to check the basement.\""
+    },
+    {
+      "id": 6,
+      "emoji": "📖",
+      "theme": "Reading",
+      "title": "The Author",
+      "opening": "The author of my favorite book had been dead for thirty years, which is why I was pretty confused to find a handwritten letter tucked inside the back cover addressed to me by name. It was dated last Tuesday."
+    },
+    {
+      "id": 7,
+      "emoji": "🧱",
+      "theme": "LEGO",
+      "title": "Minifig",
+      "opening": "The minifigure had been in my collection for as long as I could remember — yellow head, brown hair, red torso — and I had never once given it a name or a backstory. So I couldn't explain why, when I knocked it off my desk and it hit the floor, it stood straight up, crossed its tiny plastic arms, and looked directly at me."
+    },
+    {
+      "id": 8,
+      "emoji": "🎮",
+      "theme": "Nintendo",
+      "title": "High Score",
+      "opening": "The high score on the arcade machine at the pizza place had said \"AAA\" for as long as anyone could remember, which everyone assumed just meant nobody had ever entered their initials. My dad went pale when he saw it, put down his slice, and said very quietly, \"That's not what that means — AAA is what you put when you don't want anyone to know it was you.\""
+    },
+    {
+      "id": 9,
+      "emoji": "🌭",
+      "theme": "Silly / Absurd",
+      "title": "The Championship",
+      "opening": "The rules of the First Annual Backyard Olympics were simple: every event had to be something you could do with items found in the kitchen, and my sister was already winning because nobody had thought to ban soup ladles as javelin replacements. I was in third place behind a dog who had accidentally entered the biscuit toss and was refusing to give the biscuit back."
+    },
+    {
+      "id": 10,
+      "emoji": "🔭",
+      "theme": "Science / Mystery",
+      "title": "The Signal",
+      "opening": "My homemade radio antenna was only supposed to pick up weather stations and the occasional trucker, so I had no explanation for the signal that came through at 2:08 a.m. — a repeating pattern of beeps that, when I wrote them down and stared at them long enough, turned out to be my own birthday in morse code. It had been transmitting for eleven years."
+    }
+  ]
+}

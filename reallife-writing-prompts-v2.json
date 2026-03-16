@@ -1,0 +1,76 @@
+{
+  "title": "10 Real Life Writing Prompts (Revised)",
+  "description": "Non-fiction, personal writing prompts for a 10-year-old boy. Each prompt targets a genuinely different memory, opinion, or experience to ensure unique stories. Goal: write one full page by hand.",
+  "prompts": [
+    {
+      "id": 1,
+      "emoji": "😬",
+      "theme": "Embarrassing Moment",
+      "title": "The Time I Wanted to Disappear",
+      "prompt": "Write about the most embarrassing thing that has ever happened to you. Where were you? Who was there? Describe exactly what happened, moment by moment, and how your face felt when it happened. Is it funny now, or still embarrassing? Would you go back and change it if you could?"
+    },
+    {
+      "id": 2,
+      "emoji": "🍕",
+      "theme": "Food",
+      "title": "My Perfect Meal, From Start to Finish",
+      "prompt": "Design your perfect meal — breakfast, lunch, or dinner — from scratch. Every single item on the plate, what drink goes with it, where you'd eat it, and who would be sitting at the table with you. Then write about a real meal you've had that came close to perfect, and what made it so good."
+    },
+    {
+      "id": 3,
+      "emoji": "😤",
+      "theme": "Strong Opinion",
+      "title": "Something That Drives Me Absolutely Crazy",
+      "prompt": "What is one thing — a rule, a habit, a food, anything — that genuinely annoys or frustrates you? Write your full honest argument for why it's wrong, unfair, or just plain stupid. Make your case as clearly and specifically as you can, like you're trying to convince someone who disagrees with you."
+    },
+    {
+      "id": 4,
+      "emoji": "👴",
+      "theme": "Someone You Know",
+      "title": "The Most Interesting Person in My Life",
+      "prompt": "Think of one person in your life — a grandparent, neighbor, coach, relative, anyone — who has lived a life very different from yours. Write about what makes them interesting, what you know about their life story, and what questions you wish you had asked them or still want to ask them."
+    },
+    {
+      "id": 5,
+      "emoji": "😱",
+      "theme": "Fear",
+      "title": "The Thing That Actually Scares Me",
+      "prompt": "Write honestly about something that genuinely scares or worries you — not a monster, but a real thing. It could be something small or something big. When did you first notice this fear? What does it feel like in your body when it comes up? Have you ever faced it? Do you think you will someday?"
+    },
+    {
+      "id": 6,
+      "emoji": "🤝",
+      "theme": "Friendship",
+      "title": "The Story of My Best Friendship",
+      "prompt": "How did you and your best friend actually become friends? Write the whole origin story — when you met, what you thought of each other at first, what changed, and what the moment was when you knew you were real friends. What do you two do that you don't do with anyone else?"
+    },
+    {
+      "id": 7,
+      "emoji": "🔨",
+      "theme": "Making Things",
+      "title": "Something I Built or Made That I'm Proud Of",
+      "prompt": "Describe something you physically made or built — a LEGO creation, a 3D print, something from Scouts, anything. What was it? How long did it take? What was the hardest part? What did it look like when it was finished? What happened to it — do you still have it?"
+    },
+    {
+      "id": 8,
+      "emoji": "⚡",
+      "theme": "Surprise",
+      "title": "The Day Something Happened That I Did Not Expect",
+      "prompt": "Write about a day when something completely unexpected happened — good, bad, funny, or strange. It could be something tiny or something big. What were you expecting the day to be like? What actually happened instead? How did you react, and how did things turn out?"
+    },
+    {
+      "id": 9,
+      "emoji": "🧭",
+      "theme": "Belief",
+      "title": "A Rule I Live By",
+      "prompt": "Is there something you genuinely believe in — a personal rule, a value, a way of treating people — that guides how you act? Where did it come from? Did someone teach it to you, or did you figure it out yourself? Write about a specific time when living by that rule was hard but you did it anyway."
+    },
+    {
+      "id": 10,
+      "emoji": "🌅",
+      "theme": "Ordinary Magic",
+      "title": "A Small Thing I Actually Really Love",
+      "prompt": "Write about something small and ordinary that you genuinely love — a smell, a sound, a time of day, a specific food, a feeling. Not a big thing like a vacation, but something quiet and everyday that makes life feel good. Try to describe it so specifically that someone who has never experienced it could understand exactly why it matters to you."
+    }
+  ]
+}
