@@ -1,8 +1,19 @@
 #!/usr/bin/env python3
-"""Generate sample PDFs - one page from each of the 4 prompt categories."""
+"""Generate sample PDFs - one page from each of the 4 prompt categories.
 
+Usage:
+    python3 generate_pdf_samples.py                # use original prompts
+    python3 generate_pdf_samples.py --use-latest   # prefer *-v2.json when available
+"""
+
+import argparse
+import glob
 import json
 import os
+import re
+import time
+import urllib.request
+from pathlib import Path
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch
 from reportlab.lib.colors import Color, white, black, HexColor
@@ -26,6 +37,25 @@ pdfmetrics.registerFont(TTFont("LibSerifItalic", "/usr/share/fonts/truetype/libe
 pdfmetrics.registerFont(TTFont("LibSerifBoldItalic", "/usr/share/fonts/truetype/liberation/LiberationSerif-BoldItalic.ttf"))
 
 
+def resolve_prompt_file(base_name, use_latest):
+    """Return the newest versioned JSON file if --use-latest, else the base file.
+
+    Looks for files like  base-v2.json, base-v3.json, etc. and picks the highest.
+    Falls back to the original base.json if no versioned file exists.
+    """
+    if not use_latest:
+        return os.path.join(BASE, base_name)
+
+    stem = base_name.replace(".json", "")  # e.g. "reallife-writing-prompts"
+    pattern = os.path.join(BASE, f"{stem}-v*.json")
+    versioned = sorted(glob.glob(pattern))
+    if versioned:
+        chosen = versioned[-1]  # highest version
+        print(f"  [latest] Using {os.path.basename(chosen)} instead of {base_name}")
+        return chosen
+    return os.path.join(BASE, base_name)
+
+
 def wrap_text(c, text, font, size, max_width):
     """Word-wrap text to fit within max_width. Returns list of lines."""
     c.setFont(font, size)
@@ -46,17 +76,22 @@ def wrap_text(c, text, font, size, max_width):
 
 
 def draw_text_with_shadow(c, text, x, y, font, size, shadow_offset=2, text_color=white, shadow_color=None):
-    """Draw text with a soft, diffuse drop shadow."""
+    """Draw text with a large, soft, dark diffuse drop shadow."""
     c.setFont(font, size)
-    # Draw multiple shadow layers at increasing offsets for a soft diffuse look
+    # Many layers spread wide with higher alpha for a big, dark, soft shadow
     layers = [
-        (shadow_offset * 0.3, 0.10),
-        (shadow_offset * 0.6, 0.12),
-        (shadow_offset * 1.0, 0.15),
-        (shadow_offset * 1.4, 0.18),
-        (shadow_offset * 1.8, 0.15),
-        (shadow_offset * 2.2, 0.12),
-        (shadow_offset * 2.8, 0.08),
+        (shadow_offset * 0.2, 0.12),
+        (shadow_offset * 0.5, 0.14),
+        (shadow_offset * 0.8, 0.16),
+        (shadow_offset * 1.1, 0.20),
+        (shadow_offset * 1.5, 0.22),
+        (shadow_offset * 2.0, 0.22),
+        (shadow_offset * 2.5, 0.20),
+        (shadow_offset * 3.0, 0.18),
+        (shadow_offset * 3.5, 0.15),
+        (shadow_offset * 4.0, 0.12),
+        (shadow_offset * 4.5, 0.08),
+        (shadow_offset * 5.0, 0.05),
     ]
     for offset_mult, alpha in layers:
         c.setFillColor(Color(0, 0, 0, alpha))
@@ -74,21 +109,105 @@ def find_image_for_prompt(folder, prompt_id):
     return None
 
 
+def ensure_portrait(img_path, folder, prompt, mode="background"):
+    """If the image is landscape, regenerate it as portrait via DALL-E 3.
+
+    Reads the API key from the 'api_key' file in BASE.
+    Returns the (possibly updated) image path.
+    """
+    img = Image.open(img_path)
+    iw, ih = img.size
+    img.close()
+    if iw <= ih:
+        return img_path  # already portrait or square
+
+    # Read API key
+    api_key_path = os.path.join(BASE, "api_key")
+    if not os.path.exists(api_key_path):
+        print(f"    [WARN] {os.path.basename(img_path)} is landscape but no api_key file found — skipping regeneration")
+        return img_path
+
+    with open(api_key_path, "r") as f:
+        api_key = f.read().strip()
+    if not api_key:
+        print(f"    [WARN] api_key file is empty — skipping regeneration")
+        return img_path
+
+    from openai import OpenAI
+    client = OpenAI(api_key=api_key)
+
+    raw_prompt = prompt.get("prompt", "")
+    if mode == "silly":
+        full_prompt = f"Can you make me an image of {raw_prompt}?"
+    else:
+        full_prompt = (
+            f"Can you generate me a background image with space in the center for text. "
+            f"The inspiration is '{raw_prompt}'"
+        )
+
+    print(f"    [REGEN] Regenerating {os.path.basename(img_path)} as portrait...")
+    try:
+        response = client.images.generate(
+            model="dall-e-3",
+            prompt=full_prompt,
+            size="1024x1792",  # portrait
+            quality="standard",
+            style="vivid",
+            n=1,
+        )
+        image_url = response.data[0].url
+        urllib.request.urlretrieve(image_url, img_path)
+        print(f"    [REGEN] Saved portrait image to {img_path}")
+        # Small delay to respect rate limits
+        time.sleep(2)
+    except Exception as e:
+        print(f"    [ERROR] Regeneration failed: {e}")
+
+    return img_path
+
+
+def draw_cover_pages(c):
+    """Prepend all cover_page*.png files as full pages, in sorted order."""
+    pattern = os.path.join(BASE, "cover_page*.png")
+    cover_files = sorted(glob.glob(pattern), key=_cover_page_sort_key)
+    for cover_path in cover_files:
+        print(f"  Adding cover page: {os.path.basename(cover_path)}")
+        img = Image.open(cover_path)
+        iw, ih = img.size
+        # Always portrait page
+        pw, ph = WIDTH, HEIGHT
+        c.setPageSize((pw, ph))
+        scale = max(pw / iw, ph / ih)
+        draw_w = iw * scale
+        draw_h = ih * scale
+        x_off = (pw - draw_w) / 2
+        y_off = (ph - draw_h) / 2
+        c.drawImage(ImageReader(img), x_off, y_off, draw_w, draw_h)
+        c.showPage()
+
+
+def _cover_page_sort_key(path):
+    """Sort cover_page.png, cover_page2.png, cover_page3.png etc. numerically."""
+    name = os.path.basename(path)
+    m = re.search(r'cover_page(\d*)', name)
+    if m and m.group(1):
+        return int(m.group(1))
+    return 0  # cover_page.png (no number) comes first
+
+
 def draw_writing_prompt_page(c, prompt):
     """Writing prompt: image background with text overlay and drop shadow."""
     img_path = find_image_for_prompt("writing-prompts", prompt["id"])
     if not img_path:
         return
 
+    img_path = ensure_portrait(img_path, "writing-prompts", prompt, mode="background")
+
     img = Image.open(img_path)
     iw, ih = img.size
-    # Use landscape page for landscape images to avoid cropping
-    if iw > ih:
-        pw, ph = HEIGHT, WIDTH  # swap to landscape
-        c.setPageSize((pw, ph))
-    else:
-        pw, ph = WIDTH, HEIGHT
-        c.setPageSize((pw, ph))
+    # All pages portrait
+    pw, ph = WIDTH, HEIGHT
+    c.setPageSize((pw, ph))
     scale = max(pw / iw, ph / ih)
     draw_w = iw * scale
     draw_h = ih * scale
@@ -129,15 +248,13 @@ def draw_silly_scene_page(c, prompt):
     if not img_path:
         return
 
+    img_path = ensure_portrait(img_path, "silly-scene-prompts", prompt, mode="silly")
+
     img = Image.open(img_path)
     iw, ih = img.size
-    # Use landscape page for landscape images to avoid cropping
-    if iw > ih:
-        pw, ph = HEIGHT, WIDTH  # swap to landscape
-        c.setPageSize((pw, ph))
-    else:
-        pw, ph = WIDTH, HEIGHT
-        c.setPageSize((pw, ph))
+    # All pages portrait
+    pw, ph = WIDTH, HEIGHT
+    c.setPageSize((pw, ph))
     scale = max(pw / iw, ph / ih)
     draw_w = iw * scale
     draw_h = ih * scale
@@ -299,17 +416,25 @@ def draw_story_starter_page(c, prompt):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Generate sample PDF with one page per category.")
+    parser.add_argument("--use-latest", action="store_true",
+                        help="Prefer newest versioned prompt files (e.g. *-v2.json)")
+    args = parser.parse_args()
+
     output = os.path.join(BASE, "sample_prompts.pdf")
     c = canvas.Canvas(output, pagesize=letter)
 
-    # Load all prompts
-    with open(os.path.join(BASE, "writing-prompts.json")) as f:
+    # Cover pages first
+    draw_cover_pages(c)
+
+    # Load all prompts (with optional v2 resolution)
+    with open(resolve_prompt_file("writing-prompts.json", args.use_latest)) as f:
         writing = json.load(f)["prompts"]
-    with open(os.path.join(BASE, "silly-scene-prompts.json")) as f:
+    with open(resolve_prompt_file("silly-scene-prompts.json", args.use_latest)) as f:
         silly = json.load(f)["prompts"]
-    with open(os.path.join(BASE, "reallife-writing-prompts.json")) as f:
+    with open(resolve_prompt_file("reallife-writing-prompts.json", args.use_latest)) as f:
         reallife = json.load(f)["prompts"]
-    with open(os.path.join(BASE, "story-starter-prompts.json")) as f:
+    with open(resolve_prompt_file("story-starter-prompts.json", args.use_latest)) as f:
         starters = json.load(f)["prompts"]
 
     # Sample: one from each category
