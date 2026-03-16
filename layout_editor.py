@@ -72,7 +72,8 @@ def _wrap_text_svg(text, font_size, max_width, is_bold):
 
 
 def _build_text_svg(text, box, font_size, is_bold, align, text_color,
-                    shadow_color, shadow_dx, shadow_dy, pw=PW, ph=PH):
+                    shadow_color, shadow_dx, shadow_dy, shadow_blur,
+                    pw=PW, ph=PH, filter_id=""):
     """Generate SVG elements for a text box (no box background, just text + shadow)."""
     x = box["x"] * pw
     y_top = box["y"] * ph
@@ -93,20 +94,33 @@ def _build_text_svg(text, box, font_size, is_bold, align, text_color,
         tx = x + w - pad
 
     weight = "bold" if is_bold else "normal"
+    has_shadow = shadow_dx or shadow_dy or shadow_blur
     svg = ""
-    ty = y_top + font_size + pad
-    for line in lines:
-        if ty > y_top + h - 4:
-            break
-        escaped = _esc(line)
-        # Shadow
-        if shadow_dx or shadow_dy:
+
+    # Shadow pass (optionally blurred)
+    if has_shadow:
+        if shadow_blur and filter_id:
+            svg += f'<g filter="url(#{filter_id})">\n'
+        ty = y_top + font_size + pad
+        for line in lines:
+            if ty > y_top + h - 4:
+                break
+            escaped = _esc(line)
             svg += (f'<text x="{tx + shadow_dx}" y="{ty + shadow_dy}" '
                     f'font-size="{font_size}" font-weight="{weight}" '
                     f'font-family="Liberation Sans, Arial, sans-serif" '
                     f'text-anchor="{anchor}" fill="{shadow_color}">'
                     f'{escaped}</text>\n')
-        # Main text
+            ty += line_h
+        if shadow_blur and filter_id:
+            svg += '</g>\n'
+
+    # Main text pass
+    ty = y_top + font_size + pad
+    for line in lines:
+        if ty > y_top + h - 4:
+            break
+        escaped = _esc(line)
         svg += (f'<text x="{tx}" y="{ty}" '
                 f'font-size="{font_size}" font-weight="{weight}" '
                 f'font-family="Liberation Sans, Arial, sans-serif" '
@@ -138,7 +152,15 @@ def build_page_svg(layout, prompt, img_src, editor_mode=False):
         svg = (f'<svg xmlns="http://www.w3.org/2000/svg" '
                f'width="{pw}pt" height="{ph}pt" viewBox="0 0 {pw} {ph}">\n')
 
-    svg += f'<defs><clipPath id="page-clip"><rect x="0" y="0" width="{pw}" height="{ph}"/></clipPath></defs>\n'
+    # Blur filters for shadows
+    title_blur = layout.get("title_shadow_blur", 0)
+    body_blur = layout.get("body_shadow_blur", 0)
+    defs = f'<clipPath id="page-clip"><rect x="0" y="0" width="{pw}" height="{ph}"/></clipPath>\n'
+    if title_blur > 0:
+        defs += f'<filter id="title-blur"><feGaussianBlur stdDeviation="{title_blur}"/></filter>\n'
+    if body_blur > 0:
+        defs += f'<filter id="body-blur"><feGaussianBlur stdDeviation="{body_blur}"/></filter>\n'
+    svg += f'<defs>{defs}</defs>\n'
 
     # Background image
     if img_src and iw and ih:
@@ -164,12 +186,9 @@ def build_page_svg(layout, prompt, img_src, editor_mode=False):
                 f'fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="0.5" '
                 f'stroke-dasharray="4 4"/>\n')
 
-    # Text settings
+    # Text settings (per-element shadow)
     title_color = layout.get("title_color", "#ffffff")
     body_color = layout.get("body_color", "#ffffff")
-    shadow_color = layout.get("shadow_color", "rgba(0,0,0,0.6)")
-    shadow_dx = layout.get("shadow_dx", 2)
-    shadow_dy = layout.get("shadow_dy", 2)
 
     # Title text
     svg += _build_text_svg(
@@ -178,8 +197,13 @@ def build_page_svg(layout, prompt, img_src, editor_mode=False):
         layout.get("title_size", 34),
         True,
         layout.get("title_align", "left"),
-        title_color, shadow_color, shadow_dx, shadow_dy,
+        title_color,
+        layout.get("title_shadow_color", "#000000"),
+        layout.get("title_shadow_dx", 2),
+        layout.get("title_shadow_dy", 2),
+        title_blur,
         pw, ph,
+        "title-blur" if title_blur > 0 else "",
     )
 
     # Body text
@@ -189,8 +213,13 @@ def build_page_svg(layout, prompt, img_src, editor_mode=False):
         layout.get("body_size", 21),
         False,
         layout.get("body_align", "left"),
-        body_color, shadow_color, shadow_dx, shadow_dy,
+        body_color,
+        layout.get("body_shadow_color", "#000000"),
+        layout.get("body_shadow_dx", 2),
+        layout.get("body_shadow_dy", 2),
+        body_blur,
         pw, ph,
+        "body-blur" if body_blur > 0 else "",
     )
 
     svg += '</svg>'
@@ -377,14 +406,21 @@ body { font-family: 'Liberation Sans', Arial, sans-serif; background: #1a1a2e; c
     </div>
     <!-- Row 2: Colors + shadow controls + generate -->
     <div class="toolbar-row">
-      <label>Title color: <input type="color" id="title-color" value="#ffffff" onchange="onColorChange()"></label>
-      <label>Body color: <input type="color" id="body-color" value="#ffffff" onchange="onColorChange()"></label>
+      <span class="lbl">Title:</span>
+      <label>color <input type="color" id="title-color" value="#ffffff" onchange="onStyleChange()"></label>
+      <label>shadow <input type="color" id="title-shadow-color" value="#000000" onchange="onStyleChange()"></label>
+      <label>dx<input type="number" id="title-shadow-dx" value="2" min="-10" max="10" onchange="onStyleChange()"></label>
+      <label>dy<input type="number" id="title-shadow-dy" value="2" min="-10" max="10" onchange="onStyleChange()"></label>
+      <label>blur<input type="number" id="title-shadow-blur" value="0" min="0" max="20" step="0.5" onchange="onStyleChange()"></label>
       <span class="sep"></span>
-      <label>Shadow color: <input type="color" id="shadow-color" value="#000000" onchange="onColorChange()"></label>
-      <label>dx: <input type="number" id="shadow-dx" value="2" min="-10" max="10" onchange="onShadowChange()"></label>
-      <label>dy: <input type="number" id="shadow-dy" value="2" min="-10" max="10" onchange="onShadowChange()"></label>
+      <span class="lbl">Body:</span>
+      <label>color <input type="color" id="body-color" value="#ffffff" onchange="onStyleChange()"></label>
+      <label>shadow <input type="color" id="body-shadow-color" value="#000000" onchange="onStyleChange()"></label>
+      <label>dx<input type="number" id="body-shadow-dx" value="2" min="-10" max="10" onchange="onStyleChange()"></label>
+      <label>dy<input type="number" id="body-shadow-dy" value="2" min="-10" max="10" onchange="onStyleChange()"></label>
+      <label>blur<input type="number" id="body-shadow-blur" value="0" min="0" max="20" step="0.5" onchange="onStyleChange()"></label>
       <span class="sep"></span>
-      <label>Overlay: <input type="number" id="overlay-opacity" value="45" min="0" max="100" step="5" onchange="onOverlayChange()">%</label>
+      <label>Overlay: <input type="number" id="overlay-opacity" value="45" min="0" max="100" step="5" onchange="onStyleChange()">%</label>
       <span class="sep"></span>
       <label>Page:
         <select id="page-size" onchange="setPageSize(this.value)">
@@ -462,9 +498,14 @@ function defaultLayout(prompt) {
         body_text: prompt.prompt,
         title_color: "#ffffff",
         body_color: "#ffffff",
-        shadow_color: "#000000",
-        shadow_dx: 2,
-        shadow_dy: 2,
+        title_shadow_color: "#000000",
+        title_shadow_dx: 2,
+        title_shadow_dy: 2,
+        title_shadow_blur: 0,
+        body_shadow_color: "#000000",
+        body_shadow_dx: 2,
+        body_shadow_dy: 2,
+        body_shadow_blur: 0,
         overlay_opacity: 0.45,
         img_offset_x: 0.5,
         img_offset_y: 0.5,
@@ -521,23 +562,18 @@ function setAlign(btn) {
     renderPage();
 }
 
-function onColorChange() {
+function onStyleChange() {
     const L = layouts[prompts[currentIdx].id];
     L.title_color = document.getElementById("title-color").value;
     L.body_color = document.getElementById("body-color").value;
-    L.shadow_color = document.getElementById("shadow-color").value;
-    renderPage();
-}
-
-function onShadowChange() {
-    const L = layouts[prompts[currentIdx].id];
-    L.shadow_dx = parseInt(document.getElementById("shadow-dx").value) || 0;
-    L.shadow_dy = parseInt(document.getElementById("shadow-dy").value) || 0;
-    renderPage();
-}
-
-function onOverlayChange() {
-    const L = layouts[prompts[currentIdx].id];
+    L.title_shadow_color = document.getElementById("title-shadow-color").value;
+    L.title_shadow_dx = parseFloat(document.getElementById("title-shadow-dx").value) || 0;
+    L.title_shadow_dy = parseFloat(document.getElementById("title-shadow-dy").value) || 0;
+    L.title_shadow_blur = parseFloat(document.getElementById("title-shadow-blur").value) || 0;
+    L.body_shadow_color = document.getElementById("body-shadow-color").value;
+    L.body_shadow_dx = parseFloat(document.getElementById("body-shadow-dx").value) || 0;
+    L.body_shadow_dy = parseFloat(document.getElementById("body-shadow-dy").value) || 0;
+    L.body_shadow_blur = parseFloat(document.getElementById("body-shadow-blur").value) || 0;
     L.overlay_opacity = (parseInt(document.getElementById("overlay-opacity").value) || 45) / 100;
     renderPage();
 }
@@ -548,9 +584,14 @@ function updateToolbar() {
     document.getElementById("body-size").value = L.body_size;
     document.getElementById("title-color").value = L.title_color;
     document.getElementById("body-color").value = L.body_color;
-    document.getElementById("shadow-color").value = L.shadow_color;
-    document.getElementById("shadow-dx").value = L.shadow_dx;
-    document.getElementById("shadow-dy").value = L.shadow_dy;
+    document.getElementById("title-shadow-color").value = L.title_shadow_color;
+    document.getElementById("title-shadow-dx").value = L.title_shadow_dx;
+    document.getElementById("title-shadow-dy").value = L.title_shadow_dy;
+    document.getElementById("title-shadow-blur").value = L.title_shadow_blur;
+    document.getElementById("body-shadow-color").value = L.body_shadow_color;
+    document.getElementById("body-shadow-dx").value = L.body_shadow_dx;
+    document.getElementById("body-shadow-dy").value = L.body_shadow_dy;
+    document.getElementById("body-shadow-blur").value = L.body_shadow_blur;
     document.getElementById("overlay-opacity").value = Math.round(L.overlay_opacity * 100);
     document.getElementById("page-size").value = pageSizeKey;
     document.querySelectorAll(".align-btn").forEach(btn => {
@@ -599,7 +640,7 @@ function escHtml(s) {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function buildTextSVG(text, box, fontSize, isBold, align, textColor, shadowColor, sdx, sdy) {
+function buildTextSVG(text, box, fontSize, isBold, align, textColor, shadowColor, sdx, sdy, sblur, filterId) {
     const x = box.x * PW, yTop = box.y * PH, w = box.w * PW, h = box.h * PH;
     const pad = 8, lineH = fontSize * 1.25;
     const lines = wrapText(text, fontSize, w - 2 * pad, isBold);
@@ -609,15 +650,26 @@ function buildTextSVG(text, box, fontSize, isBold, align, textColor, shadowColor
     else if (align === "right") { anchor = "end"; tx = x + w - pad; }
 
     const weight = isBold ? "bold" : "normal";
+    const hasShadow = sdx || sdy || sblur;
     let svg = "";
+
+    // Shadow pass
+    if (hasShadow) {
+        if (sblur && filterId) svg += `<g filter="url(#${filterId})">\n`;
+        let ty = yTop + fontSize + pad;
+        for (const line of lines) {
+            if (ty > yTop + h - 4) break;
+            svg += `<text x="${tx + sdx}" y="${ty + sdy}" font-size="${fontSize}" font-weight="${weight}" font-family="Liberation Sans, Arial, sans-serif" text-anchor="${anchor}" fill="${shadowColor}">${escHtml(line)}</text>\n`;
+            ty += lineH;
+        }
+        if (sblur && filterId) svg += `</g>\n`;
+    }
+
+    // Main text pass
     let ty = yTop + fontSize + pad;
     for (const line of lines) {
         if (ty > yTop + h - 4) break;
-        const esc = escHtml(line);
-        if (sdx || sdy) {
-            svg += `<text x="${tx + sdx}" y="${ty + sdy}" font-size="${fontSize}" font-weight="${weight}" font-family="Liberation Sans, Arial, sans-serif" text-anchor="${anchor}" fill="${shadowColor}">${esc}</text>\n`;
-        }
-        svg += `<text x="${tx}" y="${ty}" font-size="${fontSize}" font-weight="${weight}" font-family="Liberation Sans, Arial, sans-serif" text-anchor="${anchor}" fill="${textColor}">${esc}</text>\n`;
+        svg += `<text x="${tx}" y="${ty}" font-size="${fontSize}" font-weight="${weight}" font-family="Liberation Sans, Arial, sans-serif" text-anchor="${anchor}" fill="${textColor}">${escHtml(line)}</text>\n`;
         ty += lineH;
     }
     return svg;
@@ -639,7 +691,10 @@ function renderPage() {
     container.style.height = svgH + "px";
 
     let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${PW} ${PH}">`;
-    svg += `<defs><clipPath id="page-clip"><rect x="0" y="0" width="${PW}" height="${PH}"/></clipPath></defs>`;
+    let defs = `<clipPath id="page-clip"><rect x="0" y="0" width="${PW}" height="${PH}"/></clipPath>`;
+    if (L.title_shadow_blur > 0) defs += `<filter id="title-blur"><feGaussianBlur stdDeviation="${L.title_shadow_blur}"/></filter>`;
+    if (L.body_shadow_blur > 0) defs += `<filter id="body-blur"><feGaussianBlur stdDeviation="${L.body_shadow_blur}"/></filter>`;
+    svg += `<defs>${defs}</defs>`;
 
     if (p.has_image) {
         const geo = imgGeometry(p);
@@ -660,11 +715,13 @@ function renderPage() {
 
     // Title text box (editor wrapper with drag/resize handles)
     svg += buildEditorBox("title", L.title_box,
-        buildTextSVG(L.title_text, L.title_box, L.title_size, true, L.title_align, L.title_color, L.shadow_color, L.shadow_dx, L.shadow_dy));
+        buildTextSVG(L.title_text, L.title_box, L.title_size, true, L.title_align, L.title_color,
+            L.title_shadow_color, L.title_shadow_dx, L.title_shadow_dy, L.title_shadow_blur, "title-blur"));
 
     // Body text box
     svg += buildEditorBox("body", L.body_box,
-        buildTextSVG(L.body_text, L.body_box, L.body_size, false, L.body_align, L.body_color, L.shadow_color, L.shadow_dx, L.shadow_dy));
+        buildTextSVG(L.body_text, L.body_box, L.body_size, false, L.body_align, L.body_color,
+            L.body_shadow_color, L.body_shadow_dx, L.body_shadow_dy, L.body_shadow_blur, "body-blur"));
 
     svg += `</svg>`;
     container.innerHTML = svg;
