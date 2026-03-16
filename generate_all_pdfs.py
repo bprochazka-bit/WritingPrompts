@@ -143,7 +143,7 @@ def _generate_image(dest_path, prompt, mode="background"):
         response = client.images.generate(
             model="gpt-image-1",
             prompt=full_prompt,
-            size="1024x1792",
+            size="1024x1536",  # portrait
             quality="medium",
             n=1,
         )
