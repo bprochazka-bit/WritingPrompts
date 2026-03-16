@@ -157,9 +157,11 @@ def build_page_svg(layout, prompt, img_src, editor_mode=False):
     body_blur = layout.get("body_shadow_blur", 0)
     defs = f'<clipPath id="page-clip"><rect x="0" y="0" width="{pw}" height="{ph}"/></clipPath>\n'
     if title_blur > 0:
-        defs += f'<filter id="title-blur"><feGaussianBlur stdDeviation="{title_blur}"/></filter>\n'
+        defs += (f'<filter id="title-blur" x="-50%" y="-50%" width="200%" height="200%">'
+                 f'<feGaussianBlur in="SourceGraphic" stdDeviation="{title_blur}"/></filter>\n')
     if body_blur > 0:
-        defs += f'<filter id="body-blur"><feGaussianBlur stdDeviation="{body_blur}"/></filter>\n'
+        defs += (f'<filter id="body-blur" x="-50%" y="-50%" width="200%" height="200%">'
+                 f'<feGaussianBlur in="SourceGraphic" stdDeviation="{body_blur}"/></filter>\n')
     svg += f'<defs>{defs}</defs>\n'
 
     # Background image
@@ -692,8 +694,8 @@ function renderPage() {
 
     let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${PW} ${PH}">`;
     let defs = `<clipPath id="page-clip"><rect x="0" y="0" width="${PW}" height="${PH}"/></clipPath>`;
-    if (L.title_shadow_blur > 0) defs += `<filter id="title-blur"><feGaussianBlur stdDeviation="${L.title_shadow_blur}"/></filter>`;
-    if (L.body_shadow_blur > 0) defs += `<filter id="body-blur"><feGaussianBlur stdDeviation="${L.body_shadow_blur}"/></filter>`;
+    if (L.title_shadow_blur > 0) defs += `<filter id="title-blur" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur in="SourceGraphic" stdDeviation="${L.title_shadow_blur}"/></filter>`;
+    if (L.body_shadow_blur > 0) defs += `<filter id="body-blur" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur in="SourceGraphic" stdDeviation="${L.body_shadow_blur}"/></filter>`;
     svg += `<defs>${defs}</defs>`;
 
     if (p.has_image) {
