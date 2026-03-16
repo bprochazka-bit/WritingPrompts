@@ -23,7 +23,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.utils import ImageReader
 from PIL import Image
 
-BASE = "/home/user/WritingPrompts"
+BASE = os.path.dirname(os.path.abspath(__file__))
 WIDTH, HEIGHT = letter  # 612 x 792 points
 
 # Register fonts
