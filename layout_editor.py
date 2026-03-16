@@ -2,6 +2,8 @@
 """Web UI for laying out writing prompt text over background images.
 
 Drag and resize title/body text boxes on each page, then generate a PDF.
+PDF generation uses cairosvg to render the exact same SVG as the editor —
+what you see is what you get.
 
 Usage:
     python3 layout_editor.py [--port 5000] [--prompts writing-prompts.json]
@@ -11,37 +13,20 @@ import argparse
 import json
 import os
 import glob
+import html
 from io import BytesIO
 
-from flask import Flask, request, jsonify, send_file, send_from_directory, Response
+from flask import Flask, request, jsonify, send_file, send_from_directory
 from PIL import Image
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.units import inch
-from reportlab.pdfgen import canvas
-from reportlab.lib.colors import Color
-from reportlab.lib.utils import ImageReader
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
+import cairosvg
+from pypdf import PdfWriter, PdfReader
 
 app = Flask(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────
-WIDTH, HEIGHT = letter  # 612 x 792 pt
-MARGIN = 1.0 * inch
+PW, PH = 612, 792  # US Letter in points
 PROMPTS_FILE = "writing-prompts.json"
 IMAGE_DIR = "writing-prompts"
-
-# ── Font registration ─────────────────────────────────────────────────────
-FONT_DIR = "/usr/share/fonts/truetype/liberation"
-_fonts_registered = False
-
-def _register_fonts():
-    global _fonts_registered
-    if _fonts_registered:
-        return
-    pdfmetrics.registerFont(TTFont("LibSans", f"{FONT_DIR}/LiberationSans-Regular.ttf"))
-    pdfmetrics.registerFont(TTFont("LibSansBold", f"{FONT_DIR}/LiberationSans-Bold.ttf"))
-    _fonts_registered = True
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -56,36 +41,148 @@ def _load_prompts():
         return json.load(f)
 
 
-def wrap_text(c, text, font, size, max_width):
-    c.setFont(font, size)
+def _img_geometry(iw, ih):
+    """Compute how the image covers the page. Returns (drawW, drawH, extraX, extraY)."""
+    scale = max(PW / iw, PH / ih)
+    dw, dh = iw * scale, ih * scale
+    return dw, dh, dw - PW, dh - PH
+
+
+def _esc(s):
+    """Escape text for SVG/XML."""
+    return html.escape(s, quote=True)
+
+
+def _wrap_text_svg(text, font_size, max_width, is_bold):
+    """Word-wrap text using approximate character widths for Liberation Sans."""
+    char_w = font_size * (0.58 if is_bold else 0.52)
     words = text.split()
     lines = []
     current = ""
     for word in words:
-        test = f"{current} {word}".strip()
-        if c.stringWidth(test, font, size) <= max_width:
-            current = test
-        else:
-            if current:
-                lines.append(current)
+        test = f"{current} {word}".strip() if current else word
+        if len(test) * char_w > max_width and current:
+            lines.append(current)
             current = word
+        else:
+            current = test
     if current:
         lines.append(current)
     return lines
 
 
-def draw_text_with_shadow(c, text, x, y, font, size, shadow_offset=2, align="left", box_w=None):
-    c.setFont(font, size)
-    if align == "center" and box_w:
-        tw = c.stringWidth(text, font, size)
-        x = x + (box_w - tw) / 2
-    elif align == "right" and box_w:
-        tw = c.stringWidth(text, font, size)
-        x = x + box_w - tw
-    c.setFillColor(Color(0, 0, 0, 0.6))
-    c.drawString(x + shadow_offset, y - shadow_offset, text)
-    c.setFillColor(Color(1, 1, 1, 1))
-    c.drawString(x, y, text)
+def _build_text_svg(text, box, font_size, is_bold, align, text_color,
+                    shadow_color, shadow_dx, shadow_dy):
+    """Generate SVG elements for a text box (no box background, just text + shadow)."""
+    x = box["x"] * PW
+    y_top = box["y"] * PH
+    w = box["w"] * PW
+    h = box["h"] * PH
+    pad = 8
+    line_h = font_size * 1.25
+
+    lines = _wrap_text_svg(text, font_size, w - 2 * pad, is_bold)
+
+    anchor = "start"
+    tx = x + pad
+    if align == "center":
+        anchor = "middle"
+        tx = x + w / 2
+    elif align == "right":
+        anchor = "end"
+        tx = x + w - pad
+
+    weight = "bold" if is_bold else "normal"
+    svg = ""
+    ty = y_top + font_size + pad
+    for line in lines:
+        if ty > y_top + h - 4:
+            break
+        escaped = _esc(line)
+        # Shadow
+        if shadow_dx or shadow_dy:
+            svg += (f'<text x="{tx + shadow_dx}" y="{ty + shadow_dy}" '
+                    f'font-size="{font_size}" font-weight="{weight}" '
+                    f'font-family="Liberation Sans, Arial, sans-serif" '
+                    f'text-anchor="{anchor}" fill="{shadow_color}">'
+                    f'{escaped}</text>\n')
+        # Main text
+        svg += (f'<text x="{tx}" y="{ty}" '
+                f'font-size="{font_size}" font-weight="{weight}" '
+                f'font-family="Liberation Sans, Arial, sans-serif" '
+                f'text-anchor="{anchor}" fill="{text_color}">'
+                f'{escaped}</text>\n')
+        ty += line_h
+    return svg
+
+
+def build_page_svg(layout, prompt, img_src, editor_mode=False):
+    """Build the SVG for one page.
+
+    img_src: image URL or file:// path
+    editor_mode: if True, adds drag handles, selection UI, margin guides
+    """
+    iw = layout.get("img_w", 0)
+    ih = layout.get("img_h", 0)
+    overlay = layout.get("overlay_opacity", 0.45)
+
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" '
+           f'width="{PW}" height="{PH}" viewBox="0 0 {PW} {PH}">\n')
+    svg += f'<defs><clipPath id="page-clip"><rect x="0" y="0" width="{PW}" height="{PH}"/></clipPath></defs>\n'
+
+    # Background image
+    if img_src and iw and ih:
+        dw, dh, ex, ey = _img_geometry(iw, ih)
+        ox = layout.get("img_offset_x", 0.5)
+        oy = layout.get("img_offset_y", 0.5)
+        img_x = -ex * ox
+        img_y = -ey * oy
+        svg += '<g clip-path="url(#page-clip)">\n'
+        svg += (f'<image href="{img_src}" x="{img_x}" y="{img_y}" '
+                f'width="{dw}" height="{dh}" preserveAspectRatio="none"/>\n')
+        svg += '</g>\n'
+        svg += f'<rect x="0" y="0" width="{PW}" height="{PH}" fill="rgba(0,0,0,{overlay})"/>\n'
+
+    # Editor-only: clickable background for panning
+    if editor_mode and img_src:
+        svg += (f'<rect class="bg-drag" x="0" y="0" width="{PW}" height="{PH}" '
+                f'fill="transparent" style="cursor: grab;"/>\n')
+
+    # Editor-only: margin guides
+    if editor_mode:
+        svg += (f'<rect x="72" y="72" width="{PW - 144}" height="{PH - 144}" '
+                f'fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="0.5" '
+                f'stroke-dasharray="4 4"/>\n')
+
+    # Text settings
+    title_color = layout.get("title_color", "#ffffff")
+    body_color = layout.get("body_color", "#ffffff")
+    shadow_color = layout.get("shadow_color", "rgba(0,0,0,0.6)")
+    shadow_dx = layout.get("shadow_dx", 2)
+    shadow_dy = layout.get("shadow_dy", 2)
+
+    # Title text
+    svg += _build_text_svg(
+        layout.get("title_text", prompt["title"]),
+        layout["title_box"],
+        layout.get("title_size", 34),
+        True,
+        layout.get("title_align", "left"),
+        title_color, shadow_color, shadow_dx, shadow_dy,
+    )
+
+    # Body text
+    svg += _build_text_svg(
+        layout.get("body_text", prompt["prompt"]),
+        layout["body_box"],
+        layout.get("body_size", 21),
+        False,
+        layout.get("body_align", "left"),
+        body_color, shadow_color, shadow_dx, shadow_dy,
+    )
+
+    svg += '</svg>'
+    return svg
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────
@@ -97,22 +194,21 @@ def index():
 @app.route("/api/prompts")
 def api_prompts():
     data = _load_prompts()
-    prompts = data["prompts"]
     result = []
-    for p in prompts:
+    for p in data["prompts"]:
         img_path = _find_image(p["id"])
-        img_w, img_h = 0, 0
+        iw, ih = 0, 0
         if img_path:
             img = Image.open(img_path)
-            img_w, img_h = img.size
+            iw, ih = img.size
         result.append({
             "id": p["id"],
             "title": p["title"],
             "prompt": p["prompt"],
             "theme": p["theme"],
             "has_image": img_path is not None,
-            "img_w": img_w,
-            "img_h": img_h,
+            "img_w": iw,
+            "img_h": ih,
         })
     return jsonify(result)
 
@@ -127,18 +223,12 @@ def api_image(prompt_id):
 
 @app.route("/api/generate-pdf", methods=["POST"])
 def api_generate_pdf():
-    """Generate PDF from layout data.
-
-    Expects JSON: { layouts: [ { id, title_box: {x,y,w,h}, body_box: {x,y,w,h} }, ... ] }
-    All coordinates are fractions of page size (0-1).
-    """
-    _register_fonts()
+    """Generate PDF by rendering each page as SVG then converting with cairosvg."""
     data = request.get_json()
     layouts = data.get("layouts", [])
     prompts_data = {p["id"]: p for p in _load_prompts()["prompts"]}
 
-    buf = BytesIO()
-    c = canvas.Canvas(buf, pagesize=letter)
+    writer = PdfWriter()
 
     for layout in layouts:
         pid = layout["id"]
@@ -150,69 +240,30 @@ def api_generate_pdf():
         if not img_path:
             continue
 
-        pw, ph = WIDTH, HEIGHT
-        c.setPageSize((pw, ph))
+        # Use file:// URL so cairosvg can load the image
+        img_abs = os.path.abspath(img_path)
+        img_src = f"file://{img_abs}"
 
-        # Draw background image with offset
+        # Get image dimensions
         img = Image.open(img_path)
-        iw, ih = img.size
-        scale = max(pw / iw, ph / ih)
-        draw_w, draw_h = iw * scale, ih * scale
-        # img_offset: 0.5 = centered (default)
-        img_ox = layout.get("img_offset_x", 0.5)
-        img_oy = layout.get("img_offset_y", 0.5)
-        extra_x = draw_w - pw
-        extra_y = draw_h - ph
-        x_off = -extra_x * img_ox
-        y_off = -extra_y * (1 - img_oy)  # PDF Y is flipped
-        c.saveState()
-        clip = c.beginPath()
-        clip.rect(0, 0, pw, ph)
-        c.clipPath(clip, stroke=0)
-        c.drawImage(ImageReader(img), x_off, y_off, draw_w, draw_h)
-        c.restoreState()
+        layout["img_w"] = img.size[0]
+        layout["img_h"] = img.size[1]
 
-        # Dark overlay
-        c.setFillColor(Color(0, 0, 0, 0.45))
-        c.rect(0, 0, pw, ph, fill=1, stroke=0)
+        svg_str = build_page_svg(layout, prompt, img_src, editor_mode=False)
 
-        # Title box (coordinates are fractions 0-1 from top-left)
-        # SVG places first baseline at: box_top + fontSize + pad (8px)
-        # PDF Y is flipped: pdf_y = ph - svg_y
-        tb = layout["title_box"]
-        tx = tb["x"] * pw
-        tw = tb["w"] * pw
-        title_font = "LibSansBold"
-        title_size = layout.get("title_size", 34)
-        title_align = layout.get("title_align", "left")
-        title_text = layout.get("title_text", prompt["title"])
-        line_h = title_size + 8
-        # First baseline in SVG coords: tb["y"]*ph + title_size + 8
-        y = ph - (tb["y"] * ph + title_size + 8)
-        for line in wrap_text(c, title_text, title_font, title_size, tw):
-            draw_text_with_shadow(c, line, tx, y, title_font, title_size,
-                                  shadow_offset=3, align=title_align, box_w=tw)
-            y -= title_size * 1.25
+        # Convert SVG to PDF
+        pdf_buf = BytesIO()
+        cairosvg.svg2pdf(bytestring=svg_str.encode("utf-8"),
+                         write_to=pdf_buf, unsafe=True)
+        pdf_buf.seek(0)
+        reader = PdfReader(pdf_buf)
+        writer.add_page(reader.pages[0])
 
-        # Body box
-        bb = layout["body_box"]
-        bx = bb["x"] * pw
-        bw = bb["w"] * pw
-        body_font = "LibSans"
-        body_size = layout.get("body_size", 21)
-        body_align = layout.get("body_align", "left")
-        body_text = layout.get("body_text", prompt["prompt"])
-        y = ph - (bb["y"] * ph + body_size + 8)
-        for line in wrap_text(c, body_text, body_font, body_size, bw):
-            draw_text_with_shadow(c, line, bx, y, body_font, body_size,
-                                  shadow_offset=2, align=body_align, box_w=bw)
-            y -= body_size * 1.25
-
-        c.showPage()
-
-    c.save()
-    buf.seek(0)
-    return send_file(buf, mimetype="application/pdf", download_name="writing_prompts.pdf")
+    out_buf = BytesIO()
+    writer.write(out_buf)
+    out_buf.seek(0)
+    return send_file(out_buf, mimetype="application/pdf",
+                     download_name="writing_prompts.pdf")
 
 
 # ── HTML/JS/CSS (single-page app) ─────────────────────────────────────────
@@ -239,10 +290,8 @@ body { font-family: 'Liberation Sans', Arial, sans-serif; background: #1a1a2e; c
 
 /* Main area */
 #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-
-/* Toolbar rows */
-.toolbar-row { padding: 6px 16px; background: #16213e; border-bottom: 1px solid #333; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.toolbar-row button { padding: 5px 14px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; }
+.toolbar-row { padding: 5px 12px; background: #16213e; border-bottom: 1px solid #333; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.toolbar-row button { padding: 4px 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; }
 .toolbar-row .btn-primary { background: #3b82f6; color: #fff; }
 .toolbar-row .btn-primary:hover { background: #2563eb; }
 .toolbar-row .btn-success { background: #22c55e; color: #fff; }
@@ -251,33 +300,29 @@ body { font-family: 'Liberation Sans', Arial, sans-serif; background: #1a1a2e; c
 .toolbar-row .btn-nav:hover { background: #64748b; }
 .toolbar-row .btn-warn { background: #f59e0b; color: #000; }
 .toolbar-row .btn-warn:hover { background: #d97706; }
-.toolbar-row label { font-size: 12px; display: flex; align-items: center; gap: 4px; }
-.toolbar-row input[type=number] { width: 48px; padding: 2px 4px; background: #1e293b; color: #eee; border: 1px solid #444; border-radius: 3px; font-size: 12px; }
-.toolbar-row select { padding: 2px 4px; background: #1e293b; color: #eee; border: 1px solid #444; border-radius: 3px; font-size: 12px; }
+.toolbar-row label { font-size: 11px; display: flex; align-items: center; gap: 3px; }
+.toolbar-row input[type=number] { width: 42px; padding: 2px 3px; background: #1e293b; color: #eee; border: 1px solid #444; border-radius: 3px; font-size: 11px; }
+.toolbar-row input[type=color] { width: 24px; height: 22px; padding: 0; border: 1px solid #444; border-radius: 3px; cursor: pointer; background: none; }
 .toolbar-row .page-info { font-size: 12px; color: #94a3b8; }
 .toolbar-row .spacer { flex: 1; }
-.toolbar-row .status { font-size: 12px; color: #94a3b8; }
-.toolbar-row .sep { width: 1px; height: 20px; background: #444; }
-.align-btn { width: 28px; height: 26px; padding: 0 !important; display: inline-flex; align-items: center; justify-content: center; font-size: 14px !important; }
+.toolbar-row .status { font-size: 11px; color: #94a3b8; }
+.toolbar-row .sep { width: 1px; height: 18px; background: #444; }
+.toolbar-row .lbl { font-size: 11px; color: #94a3b8; font-weight: bold; }
+.align-btn { width: 24px; height: 22px; padding: 0 !important; display: inline-flex; align-items: center; justify-content: center; font-size: 12px !important; }
 .align-btn.active { background: #2563eb !important; }
 
 #canvas-wrap { flex: 1; display: flex; align-items: center; justify-content: center; overflow: auto; padding: 20px; }
-
-/* The SVG container */
 #page-container { position: relative; background: #000; box-shadow: 0 4px 24px rgba(0,0,0,0.5); }
 #page-container svg { display: block; }
 
-/* Draggable text boxes */
+/* Editor-only styles applied via CSS (not in the SVG itself) */
 .text-box { cursor: move; }
 .text-box rect.bg { fill: rgba(0,0,0,0.35); stroke: rgba(255,255,255,0.4); stroke-width: 1; rx: 4; }
 .text-box.selected rect.bg { stroke: #3b82f6; stroke-width: 2; stroke-dasharray: 6 3; }
-.text-box text { fill: white; font-family: 'Liberation Sans', Arial, sans-serif; }
-.text-box .title-text { font-weight: bold; }
 .resize-handle { fill: #3b82f6; stroke: white; stroke-width: 1; cursor: nwse-resize; opacity: 0; }
 .text-box.selected .resize-handle { opacity: 1; }
-.no-image-msg { text-anchor: middle; fill: #f87171; font-size: 18px; }
 
-/* Text edit modal */
+/* Modal */
 #edit-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100; align-items: center; justify-content: center; }
 #edit-modal.open { display: flex; }
 #edit-modal .modal-box { background: #1e293b; border-radius: 8px; padding: 20px; width: 520px; max-width: 90vw; }
@@ -296,24 +341,38 @@ body { font-family: 'Liberation Sans', Arial, sans-serif; background: #1a1a2e; c
     <div id="prompt-list"></div>
   </div>
   <div id="main">
+    <!-- Row 1: Navigation + text sizes + alignment + edit -->
     <div class="toolbar-row">
       <button class="btn-nav" onclick="prevPage()">&larr;</button>
       <span class="page-info" id="page-info">1 / 10</span>
       <button class="btn-nav" onclick="nextPage()">&rarr;</button>
       <span class="sep"></span>
-      <label>Title: <input type="number" id="title-size" value="34" min="10" max="72" onchange="onSizeChange()"></label>
+      <span class="lbl">Title:</span>
+      <input type="number" id="title-size" value="34" min="10" max="72" onchange="onSizeChange()">
       <button class="align-btn" data-target="title" data-align="left" onclick="setAlign(this)" title="Left">&#9776;</button>
       <button class="align-btn" data-target="title" data-align="center" onclick="setAlign(this)" title="Center">&#9778;</button>
       <button class="align-btn" data-target="title" data-align="right" onclick="setAlign(this)" title="Right">&#9783;</button>
-      <button class="btn-primary" style="font-size:11px" onclick="editText('title')">Edit Title</button>
+      <button class="btn-primary" onclick="editText('title')">Edit</button>
       <span class="sep"></span>
-      <label>Body: <input type="number" id="body-size" value="21" min="10" max="48" onchange="onSizeChange()"></label>
+      <span class="lbl">Body:</span>
+      <input type="number" id="body-size" value="21" min="10" max="48" onchange="onSizeChange()">
       <button class="align-btn" data-target="body" data-align="left" onclick="setAlign(this)" title="Left">&#9776;</button>
       <button class="align-btn" data-target="body" data-align="center" onclick="setAlign(this)" title="Center">&#9778;</button>
       <button class="align-btn" data-target="body" data-align="right" onclick="setAlign(this)" title="Right">&#9783;</button>
-      <button class="btn-primary" style="font-size:11px" onclick="editText('body')">Edit Body</button>
+      <button class="btn-primary" onclick="editText('body')">Edit</button>
       <span class="sep"></span>
       <button class="btn-warn" onclick="resetCurrent()">Reset</button>
+    </div>
+    <!-- Row 2: Colors + shadow controls + generate -->
+    <div class="toolbar-row">
+      <label>Title color: <input type="color" id="title-color" value="#ffffff" onchange="onColorChange()"></label>
+      <label>Body color: <input type="color" id="body-color" value="#ffffff" onchange="onColorChange()"></label>
+      <span class="sep"></span>
+      <label>Shadow color: <input type="color" id="shadow-color" value="#000000" onchange="onColorChange()"></label>
+      <label>dx: <input type="number" id="shadow-dx" value="2" min="-10" max="10" onchange="onShadowChange()"></label>
+      <label>dy: <input type="number" id="shadow-dy" value="2" min="-10" max="10" onchange="onShadowChange()"></label>
+      <span class="sep"></span>
+      <label>Overlay: <input type="number" id="overlay-opacity" value="45" min="0" max="100" step="5" onchange="onOverlayChange()">%</label>
       <span class="spacer"></span>
       <span class="status" id="status">Drag background to pan image</span>
       <button class="btn-success" id="generate-btn" onclick="generatePDF()">Generate PDF</button>
@@ -324,7 +383,6 @@ body { font-family: 'Liberation Sans', Arial, sans-serif; background: #1a1a2e; c
   </div>
 </div>
 
-<!-- Text edit modal -->
 <div id="edit-modal">
   <div class="modal-box">
     <h3 id="edit-modal-title">Edit Title</h3>
@@ -347,7 +405,6 @@ const PW = 612, PH = 792;
 const MARGIN_FRAC = 72 / 612;
 let displayScale = 1;
 
-// ── Default layout ────────────────────────────────────────────────────
 function defaultLayout(prompt) {
     return {
         id: prompt.id,
@@ -357,19 +414,25 @@ function defaultLayout(prompt) {
         body_align: "left",
         title_text: prompt.title,
         body_text: prompt.prompt,
+        title_color: "#ffffff",
+        body_color: "#ffffff",
+        shadow_color: "#000000",
+        shadow_dx: 2,
+        shadow_dy: 2,
+        overlay_opacity: 0.45,
         img_offset_x: 0.5,
         img_offset_y: 0.5,
+        img_w: prompt.img_w,
+        img_h: prompt.img_h,
         title_box: { x: MARGIN_FRAC, y: 0.08, w: 1 - 2 * MARGIN_FRAC, h: 0.18 },
         body_box:  { x: MARGIN_FRAC, y: 0.30, w: 1 - 2 * MARGIN_FRAC, h: 0.55 },
     };
 }
 
-// ── Compute image geometry (how much pan room) ────────────────────────
 function imgGeometry(prompt) {
     if (!prompt.img_w) return { extraX: 0, extraY: 0, drawW: PW, drawH: PH };
-    const iw = prompt.img_w, ih = prompt.img_h;
-    const scale = Math.max(PW / iw, PH / ih);
-    const drawW = iw * scale, drawH = ih * scale;
+    const scale = Math.max(PW / prompt.img_w, PH / prompt.img_h);
+    const drawW = prompt.img_w * scale, drawH = prompt.img_h * scale;
     return { extraX: drawW - PW, extraY: drawH - PH, drawW, drawH };
 }
 
@@ -393,160 +456,81 @@ function renderSidebar() {
     `).join("");
 }
 
-function goToPage(idx) {
-    currentIdx = idx;
-    selectedBox = null;
-    renderSidebar();
-    renderPage();
-}
-
+function goToPage(idx) { currentIdx = idx; selectedBox = null; renderSidebar(); renderPage(); }
 function prevPage() { if (currentIdx > 0) goToPage(currentIdx - 1); }
 function nextPage() { if (currentIdx < prompts.length - 1) goToPage(currentIdx + 1); }
 
-function resetCurrent() {
-    const p = prompts[currentIdx];
-    layouts[p.id] = defaultLayout(p);
-    renderPage();
-}
+function resetCurrent() { layouts[prompts[currentIdx].id] = defaultLayout(prompts[currentIdx]); renderPage(); }
 
+// ── Toolbar handlers ──────────────────────────────────────────────────
 function onSizeChange() {
-    const p = prompts[currentIdx];
-    const L = layouts[p.id];
+    const L = layouts[prompts[currentIdx].id];
     L.title_size = parseInt(document.getElementById("title-size").value) || 34;
     L.body_size = parseInt(document.getElementById("body-size").value) || 21;
     renderPage();
 }
 
-// ── Alignment ─────────────────────────────────────────────────────────
 function setAlign(btn) {
-    const target = btn.getAttribute("data-target");
-    const align = btn.getAttribute("data-align");
-    const p = prompts[currentIdx];
-    layouts[p.id][target + "_align"] = align;
+    layouts[prompts[currentIdx].id][btn.dataset.target + "_align"] = btn.dataset.align;
     renderPage();
 }
 
-function updateAlignButtons() {
-    const p = prompts[currentIdx];
-    const L = layouts[p.id];
+function onColorChange() {
+    const L = layouts[prompts[currentIdx].id];
+    L.title_color = document.getElementById("title-color").value;
+    L.body_color = document.getElementById("body-color").value;
+    L.shadow_color = document.getElementById("shadow-color").value;
+    renderPage();
+}
+
+function onShadowChange() {
+    const L = layouts[prompts[currentIdx].id];
+    L.shadow_dx = parseInt(document.getElementById("shadow-dx").value) || 0;
+    L.shadow_dy = parseInt(document.getElementById("shadow-dy").value) || 0;
+    renderPage();
+}
+
+function onOverlayChange() {
+    const L = layouts[prompts[currentIdx].id];
+    L.overlay_opacity = (parseInt(document.getElementById("overlay-opacity").value) || 45) / 100;
+    renderPage();
+}
+
+function updateToolbar() {
+    const L = layouts[prompts[currentIdx].id];
+    document.getElementById("title-size").value = L.title_size;
+    document.getElementById("body-size").value = L.body_size;
+    document.getElementById("title-color").value = L.title_color;
+    document.getElementById("body-color").value = L.body_color;
+    document.getElementById("shadow-color").value = L.shadow_color;
+    document.getElementById("shadow-dx").value = L.shadow_dx;
+    document.getElementById("shadow-dy").value = L.shadow_dy;
+    document.getElementById("overlay-opacity").value = Math.round(L.overlay_opacity * 100);
     document.querySelectorAll(".align-btn").forEach(btn => {
-        const target = btn.getAttribute("data-target");
-        const align = btn.getAttribute("data-align");
-        btn.classList.toggle("active", L[target + "_align"] === align);
+        btn.classList.toggle("active", L[btn.dataset.target + "_align"] === btn.dataset.align);
     });
 }
 
 // ── Text editing modal ────────────────────────────────────────────────
 let editTarget = null;
-
 function editText(target) {
     editTarget = target;
-    const p = prompts[currentIdx];
-    const L = layouts[p.id];
+    const L = layouts[prompts[currentIdx].id];
     document.getElementById("edit-modal-title").textContent = target === "title" ? "Edit Title" : "Edit Body";
     document.getElementById("edit-modal-text").value = L[target + "_text"];
     document.getElementById("edit-modal").classList.add("open");
     setTimeout(() => document.getElementById("edit-modal-text").focus(), 50);
 }
-
-function closeEditModal() {
-    document.getElementById("edit-modal").classList.remove("open");
-    editTarget = null;
-}
-
+function closeEditModal() { document.getElementById("edit-modal").classList.remove("open"); editTarget = null; }
 function saveEditModal() {
     if (!editTarget) return;
-    const p = prompts[currentIdx];
-    const L = layouts[p.id];
-    L[editTarget + "_text"] = document.getElementById("edit-modal-text").value;
-    closeEditModal();
-    renderPage();
+    layouts[prompts[currentIdx].id][editTarget + "_text"] = document.getElementById("edit-modal-text").value;
+    closeEditModal(); renderPage();
 }
+document.getElementById("edit-modal-text").addEventListener("keydown", e => { if (e.key === "Escape") closeEditModal(); });
 
-// Handle Escape and Enter in modal
-document.getElementById("edit-modal-text").addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeEditModal();
-});
-
-// ── Render ────────────────────────────────────────────────────────────
-function renderPage() {
-    const p = prompts[currentIdx];
-    const L = layouts[p.id];
-    document.getElementById("page-info").textContent = `${currentIdx + 1} / ${prompts.length}`;
-    document.getElementById("title-size").value = L.title_size;
-    document.getElementById("body-size").value = L.body_size;
-    updateAlignButtons();
-
-    const wrap = document.getElementById("canvas-wrap");
-    const maxW = wrap.clientWidth - 40;
-    const maxH = wrap.clientHeight - 40;
-    displayScale = Math.min(maxW / PW, maxH / PH);
-    const svgW = PW * displayScale;
-    const svgH = PH * displayScale;
-
-    const container = document.getElementById("page-container");
-    container.style.width = svgW + "px";
-    container.style.height = svgH + "px";
-
-    let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${PW} ${PH}">`;
-    svg += `<defs><clipPath id="page-clip"><rect x="0" y="0" width="${PW}" height="${PH}"/></clipPath></defs>`;
-
-    if (p.has_image) {
-        const geo = imgGeometry(p);
-        const imgX = -geo.extraX * L.img_offset_x;
-        const imgY = -geo.extraY * L.img_offset_y;
-        svg += `<g clip-path="url(#page-clip)">`;
-        svg += `<image href="/api/image/${p.id}" x="${imgX}" y="${imgY}" width="${geo.drawW}" height="${geo.drawH}" preserveAspectRatio="none"/>`;
-        svg += `</g>`;
-        // Dark overlay
-        svg += `<rect x="0" y="0" width="${PW}" height="${PH}" fill="rgba(0,0,0,0.45)"/>`;
-        // Invisible rect for background drag (behind text boxes)
-        svg += `<rect class="bg-drag" x="0" y="0" width="${PW}" height="${PH}" fill="transparent" style="cursor: grab;"/>`;
-    } else {
-        svg += `<rect x="0" y="0" width="${PW}" height="${PH}" fill="#222"/>`;
-        svg += `<text class="no-image-msg" x="${PW/2}" y="${PH/2}">No image for prompt ${p.id}</text>`;
-    }
-
-    // 1" margin guides
-    const m = 72;
-    svg += `<rect x="${m}" y="${m}" width="${PW - 2*m}" height="${PH - 2*m}" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="0.5" stroke-dasharray="4 4"/>`;
-
-    svg += renderTextBox("title", L.title_box, L.title_text, L.title_size, true, L.title_align);
-    svg += renderTextBox("body", L.body_box, L.body_text, L.body_size, false, L.body_align);
-
-    svg += `</svg>`;
-    container.innerHTML = svg;
-    attachDragListeners();
-}
-
-function renderTextBox(id, box, text, fontSize, isBold, align) {
-    const x = box.x * PW, y = box.y * PH, w = box.w * PW, h = box.h * PH;
-    const isSelected = selectedBox === id;
-    let g = `<g class="text-box ${isSelected ? 'selected' : ''}" data-box="${id}">`;
-    g += `<rect class="bg" x="${x}" y="${y}" width="${w}" height="${h}"/>`;
-
-    const lines = wrapTextSVG(text, fontSize, w - 16, isBold);
-    const lineHeight = fontSize * 1.25;
-    const pad = 8;
-    let ty = y + fontSize + pad;
-
-    let anchor = "start", textX = x + pad;
-    if (align === "center") { anchor = "middle"; textX = x + w / 2; }
-    else if (align === "right") { anchor = "end"; textX = x + w - pad; }
-
-    for (const line of lines) {
-        if (ty > y + h - 4) break;
-        g += `<text x="${textX}" y="${ty}" font-size="${fontSize}" text-anchor="${anchor}" class="${isBold ? 'title-text' : ''}">${escHtml(line)}</text>`;
-        ty += lineHeight;
-    }
-
-    const hs = 12;
-    g += `<rect class="resize-handle" data-box="${id}" x="${x + w - hs}" y="${y + h - hs}" width="${hs}" height="${hs}"/>`;
-    g += `</g>`;
-    return g;
-}
-
-function wrapTextSVG(text, fontSize, maxWidth, isBold) {
+// ── SVG text rendering (shared logic with server) ─────────────────────
+function wrapText(text, fontSize, maxWidth, isBold) {
     const charW = fontSize * (isBold ? 0.58 : 0.52);
     const words = text.split(/\s+/);
     const lines = [];
@@ -568,6 +552,89 @@ function escHtml(s) {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+function buildTextSVG(text, box, fontSize, isBold, align, textColor, shadowColor, sdx, sdy) {
+    const x = box.x * PW, yTop = box.y * PH, w = box.w * PW, h = box.h * PH;
+    const pad = 8, lineH = fontSize * 1.25;
+    const lines = wrapText(text, fontSize, w - 2 * pad, isBold);
+
+    let anchor = "start", tx = x + pad;
+    if (align === "center") { anchor = "middle"; tx = x + w / 2; }
+    else if (align === "right") { anchor = "end"; tx = x + w - pad; }
+
+    const weight = isBold ? "bold" : "normal";
+    let svg = "";
+    let ty = yTop + fontSize + pad;
+    for (const line of lines) {
+        if (ty > yTop + h - 4) break;
+        const esc = escHtml(line);
+        if (sdx || sdy) {
+            svg += `<text x="${tx + sdx}" y="${ty + sdy}" font-size="${fontSize}" font-weight="${weight}" font-family="Liberation Sans, Arial, sans-serif" text-anchor="${anchor}" fill="${shadowColor}">${esc}</text>\n`;
+        }
+        svg += `<text x="${tx}" y="${ty}" font-size="${fontSize}" font-weight="${weight}" font-family="Liberation Sans, Arial, sans-serif" text-anchor="${anchor}" fill="${textColor}">${esc}</text>\n`;
+        ty += lineH;
+    }
+    return svg;
+}
+
+// ── Render page ───────────────────────────────────────────────────────
+function renderPage() {
+    const p = prompts[currentIdx];
+    const L = layouts[p.id];
+    document.getElementById("page-info").textContent = `${currentIdx + 1} / ${prompts.length}`;
+    updateToolbar();
+
+    const wrap = document.getElementById("canvas-wrap");
+    displayScale = Math.min((wrap.clientWidth - 40) / PW, (wrap.clientHeight - 40) / PH);
+    const svgW = PW * displayScale, svgH = PH * displayScale;
+
+    const container = document.getElementById("page-container");
+    container.style.width = svgW + "px";
+    container.style.height = svgH + "px";
+
+    let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${PW} ${PH}">`;
+    svg += `<defs><clipPath id="page-clip"><rect x="0" y="0" width="${PW}" height="${PH}"/></clipPath></defs>`;
+
+    if (p.has_image) {
+        const geo = imgGeometry(p);
+        const imgX = -geo.extraX * L.img_offset_x;
+        const imgY = -geo.extraY * L.img_offset_y;
+        svg += `<g clip-path="url(#page-clip)">`;
+        svg += `<image href="/api/image/${p.id}" x="${imgX}" y="${imgY}" width="${geo.drawW}" height="${geo.drawH}" preserveAspectRatio="none"/>`;
+        svg += `</g>`;
+        svg += `<rect x="0" y="0" width="${PW}" height="${PH}" fill="rgba(0,0,0,${L.overlay_opacity})"/>`;
+        svg += `<rect class="bg-drag" x="0" y="0" width="${PW}" height="${PH}" fill="transparent" style="cursor:grab;"/>`;
+    } else {
+        svg += `<rect x="0" y="0" width="${PW}" height="${PH}" fill="#222"/>`;
+        svg += `<text text-anchor="middle" fill="#f87171" font-size="18" x="${PW/2}" y="${PH/2}">No image for prompt ${p.id}</text>`;
+    }
+
+    // Margin guides
+    svg += `<rect x="72" y="72" width="${PW-144}" height="${PH-144}" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="0.5" stroke-dasharray="4 4"/>`;
+
+    // Title text box (editor wrapper with drag/resize handles)
+    svg += buildEditorBox("title", L.title_box,
+        buildTextSVG(L.title_text, L.title_box, L.title_size, true, L.title_align, L.title_color, L.shadow_color, L.shadow_dx, L.shadow_dy));
+
+    // Body text box
+    svg += buildEditorBox("body", L.body_box,
+        buildTextSVG(L.body_text, L.body_box, L.body_size, false, L.body_align, L.body_color, L.shadow_color, L.shadow_dx, L.shadow_dy));
+
+    svg += `</svg>`;
+    container.innerHTML = svg;
+    attachDragListeners();
+}
+
+function buildEditorBox(id, box, innerSVG) {
+    const x = box.x * PW, y = box.y * PH, w = box.w * PW, h = box.h * PH;
+    const sel = selectedBox === id;
+    let g = `<g class="text-box ${sel ? 'selected' : ''}" data-box="${id}">`;
+    g += `<rect class="bg" x="${x}" y="${y}" width="${w}" height="${h}"/>`;
+    g += innerSVG;
+    g += `<rect class="resize-handle" data-box="${id}" x="${x+w-12}" y="${y+h-12}" width="12" height="12"/>`;
+    g += `</g>`;
+    return g;
+}
+
 // ── Drag, Resize & Image Pan ──────────────────────────────────────────
 let dragState = null;
 
@@ -582,8 +649,8 @@ function attachDragListeners() {
 
 function getSVGPoint(e) {
     const svg = document.querySelector("#page-container svg");
-    const rect = svg.getBoundingClientRect();
-    return { x: (e.clientX - rect.left) / displayScale, y: (e.clientY - rect.top) / displayScale };
+    const r = svg.getBoundingClientRect();
+    return { x: (e.clientX - r.left) / displayScale, y: (e.clientY - r.top) / displayScale };
 }
 
 function onMouseDown(e) {
@@ -591,34 +658,21 @@ function onMouseDown(e) {
     const box = e.target.closest(".text-box");
     const bgDrag = e.target.closest(".bg-drag");
     const pt = getSVGPoint(e);
-    const p = prompts[currentIdx];
-    const L = layouts[p.id];
+    const L = layouts[prompts[currentIdx].id];
 
     if (box) {
         const bid = box.getAttribute("data-box");
         if (!bid) return;
         selectedBox = bid;
         const bx = L[bid + "_box"];
-
-        if (handle) {
-            dragState = { mode: "resize", boxId: bid, startX: pt.x, startY: pt.y, origW: bx.w, origH: bx.h };
-        } else {
-            dragState = { mode: "move", boxId: bid, startX: pt.x, startY: pt.y, origX: bx.x, origY: bx.y };
-        }
-        e.preventDefault();
-        renderPage();
+        dragState = handle
+            ? { mode: "resize", boxId: bid, startX: pt.x, startY: pt.y, origW: bx.w, origH: bx.h }
+            : { mode: "move", boxId: bid, startX: pt.x, startY: pt.y, origX: bx.x, origY: bx.y };
+        e.preventDefault(); renderPage();
     } else if (bgDrag) {
-        // Image pan mode
         selectedBox = null;
-        dragState = {
-            mode: "pan",
-            startX: pt.x,
-            startY: pt.y,
-            origOX: L.img_offset_x,
-            origOY: L.img_offset_y,
-        };
-        e.preventDefault();
-        renderPage();
+        dragState = { mode: "pan", startX: pt.x, startY: pt.y, origOX: L.img_offset_x, origOY: L.img_offset_y };
+        e.preventDefault(); renderPage();
     }
 }
 
@@ -630,17 +684,10 @@ function onMouseMove(e) {
 
     if (dragState.mode === "pan") {
         const geo = imgGeometry(p);
-        if (geo.extraX > 0) {
-            const dxFrac = -(pt.x - dragState.startX) / geo.extraX;
-            L.img_offset_x = clamp(dragState.origOX + dxFrac, 0, 1);
-        }
-        if (geo.extraY > 0) {
-            const dyFrac = -(pt.y - dragState.startY) / geo.extraY;
-            L.img_offset_y = clamp(dragState.origOY + dyFrac, 0, 1);
-        }
+        if (geo.extraX > 0) L.img_offset_x = clamp(dragState.origOX - (pt.x - dragState.startX) / geo.extraX, 0, 1);
+        if (geo.extraY > 0) L.img_offset_y = clamp(dragState.origOY - (pt.y - dragState.startY) / geo.extraY, 0, 1);
     } else {
-        const dx = (pt.x - dragState.startX) / PW;
-        const dy = (pt.y - dragState.startY) / PH;
+        const dx = (pt.x - dragState.startX) / PW, dy = (pt.y - dragState.startY) / PH;
         const bx = L[dragState.boxId + "_box"];
         if (dragState.mode === "move") {
             bx.x = clamp(dragState.origX + dx, 0, 1 - bx.w);
@@ -650,25 +697,19 @@ function onMouseMove(e) {
             bx.h = clamp(dragState.origH + dy, 0.05, 1 - bx.y);
         }
     }
-
-    renderPage();
-    e.preventDefault();
+    renderPage(); e.preventDefault();
 }
 
 function onMouseUp() { dragState = null; }
-
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
 // ── PDF generation ────────────────────────────────────────────────────
 async function generatePDF() {
     const btn = document.getElementById("generate-btn");
     const status = document.getElementById("status");
-    btn.disabled = true;
-    btn.textContent = "Generating...";
-    status.textContent = "";
+    btn.disabled = true; btn.textContent = "Generating..."; status.textContent = "";
 
     const toGenerate = prompts.filter(p => p.has_image).map(p => layouts[p.id]);
-
     try {
         const resp = await fetch("/api/generate-pdf", {
             method: "POST",
@@ -678,31 +719,20 @@ async function generatePDF() {
         if (!resp.ok) throw new Error(`Server error: ${resp.status}`);
         const blob = await resp.blob();
         const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "writing_prompts.pdf";
-        a.click();
+        const a = document.createElement("a"); a.href = url; a.download = "writing_prompts.pdf"; a.click();
         URL.revokeObjectURL(url);
         status.textContent = "PDF downloaded!";
-    } catch (err) {
-        status.textContent = "Error: " + err.message;
-    } finally {
-        btn.disabled = false;
-        btn.textContent = "Generate PDF";
-    }
+    } catch (err) { status.textContent = "Error: " + err.message; }
+    finally { btn.disabled = false; btn.textContent = "Generate PDF"; }
 }
 
 // ── Keyboard shortcuts ────────────────────────────────────────────────
-document.addEventListener("keydown", (e) => {
+document.addEventListener("keydown", e => {
     if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
     if (e.key === "ArrowLeft") prevPage();
     if (e.key === "ArrowRight") nextPage();
     if (e.key === "Escape") { selectedBox = null; renderPage(); }
-    if (e.key === "Tab") {
-        e.preventDefault();
-        selectedBox = selectedBox === "title" ? "body" : "title";
-        renderPage();
-    }
+    if (e.key === "Tab") { e.preventDefault(); selectedBox = selectedBox === "title" ? "body" : "title"; renderPage(); }
 });
 
 init();
