@@ -7,12 +7,12 @@ Usage:
 """
 
 import argparse
+import base64
 import glob
 import json
 import os
 import re
 import time
-import urllib.request
 from pathlib import Path
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch
@@ -145,15 +145,15 @@ def _generate_image(dest_path, prompt, mode="background"):
     print(f"    [REGEN] Generating {os.path.basename(dest_path)} as portrait...")
     try:
         response = client.images.generate(
-            model="dall-e-3",
+            model="gpt-image-1",
             prompt=full_prompt,
             size="1024x1792",  # portrait
-            quality="standard",
-            style="vivid",
+            quality="medium",
             n=1,
         )
-        image_url = response.data[0].url
-        urllib.request.urlretrieve(image_url, dest_path)
+        image_bytes = base64.b64decode(response.data[0].b64_json)
+        with open(dest_path, "wb") as img_f:
+            img_f.write(image_bytes)
         print(f"    [REGEN] Saved portrait image to {dest_path}")
         time.sleep(2)
         return True
