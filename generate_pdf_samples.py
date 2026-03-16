@@ -223,61 +223,92 @@ def _cover_page_sort_key(path):
     return 0  # cover_page.png (no number) comes first
 
 
-def find_blank_region(img, block_size=32, std_threshold=35, min_blocks_w=6, min_blocks_h=6):
-    """Find the largest low-variance rectangular region in an image.
-
-    Divides the image into a grid of blocks, computes the standard deviation
-    of each block, and finds the largest rectangle where all blocks are below
-    the threshold (i.e. relatively uniform / blank).
-
-    Returns (x, y, w, h) in pixel coordinates, or None if no suitable region found.
-    """
+def _build_variance_grid(img, block_size=32, std_threshold=35):
+    """Return a boolean grid where True = low-variance (blank) block."""
     gray = np.array(img.convert("L"), dtype=np.float32)
     ih, iw = gray.shape
     rows = ih // block_size
     cols = iw // block_size
-
-    # Build a boolean grid: True = low variance (blank)
     grid = np.zeros((rows, cols), dtype=bool)
     for r in range(rows):
-        for c_idx in range(cols):
+        for ci in range(cols):
             block = gray[r * block_size:(r + 1) * block_size,
-                         c_idx * block_size:(c_idx + 1) * block_size]
-            grid[r, c_idx] = np.std(block) < std_threshold
+                         ci * block_size:(ci + 1) * block_size]
+            grid[r, ci] = np.std(block) < std_threshold
+    return grid
 
-    # Find the largest rectangle of True values using the histogram approach
+
+def _largest_rect(grid, min_blocks_w=4, min_blocks_h=4):
+    """Find the largest True rectangle in a boolean grid.
+
+    Returns (row, col, height, width) in grid units, or None.
+    """
+    rows, cols = grid.shape
     best_area = 0
-    best_rect = None  # (row, col, height, width) in grid units
-
-    # For each row, compute the height of consecutive True values above
+    best_rect = None
     heights = np.zeros(cols, dtype=int)
     for r in range(rows):
-        for c_idx in range(cols):
-            heights[c_idx] = heights[c_idx] + 1 if grid[r, c_idx] else 0
-
-        # Largest rectangle in histogram
+        for ci in range(cols):
+            heights[ci] = heights[ci] + 1 if grid[r, ci] else 0
         stack = []
-        for c_idx in range(cols + 1):
-            h = heights[c_idx] if c_idx < cols else 0
+        for ci in range(cols + 1):
+            h = heights[ci] if ci < cols else 0
             while stack and heights[stack[-1]] > h:
                 height = heights[stack.pop()]
-                width = c_idx if not stack else c_idx - stack[-1] - 1
+                width = ci if not stack else ci - stack[-1] - 1
                 if height >= min_blocks_h and width >= min_blocks_w:
                     area = height * width
                     if area > best_area:
                         best_area = area
-                        best_rect = (r - height + 1, c_idx - width, height, width)
-            stack.append(c_idx)
+                        best_rect = (r - height + 1, ci - width, height, width)
+            stack.append(ci)
+    return best_rect
 
-    if best_rect is None:
-        return None
 
-    gr, gc, gh, gw = best_rect
-    return (gc * block_size, gr * block_size, gw * block_size, gh * block_size)
+def find_blank_regions(img, block_size=32, std_threshold=35, max_regions=3):
+    """Find up to max_regions non-overlapping blank rectangles in the image.
+
+    Returns a list of (x, y, w, h) tuples in pixel coordinates, sorted
+    largest-area first.
+    """
+    grid = _build_variance_grid(img, block_size, std_threshold)
+    regions = []
+    for _ in range(max_regions):
+        rect = _largest_rect(grid)
+        if rect is None:
+            break
+        gr, gc, gh, gw = rect
+        regions.append((gc * block_size, gr * block_size,
+                        gw * block_size, gh * block_size))
+        # Mask out the found region so the next search finds a different one
+        grid[gr:gr + gh, gc:gc + gw] = False
+    return regions
+
+
+def _pixel_to_pdf(region, iw, ih, scale, x_off, y_off):
+    """Convert an image-pixel (x, y, w, h) rect to PDF coords (x, y_bottom, w, h)."""
+    rx, ry, rw, rh = region
+    pdf_x = x_off + rx * scale
+    pdf_y = y_off + (ih - ry - rh) * scale  # flip Y
+    pdf_w = rw * scale
+    pdf_h = rh * scale
+    return (pdf_x, pdf_y, pdf_w, pdf_h)
+
+
+def _clamp_region(pdf_x, pdf_y, pdf_w, pdf_h, pw, ph, pad=None):
+    """Clamp a PDF region to page boundaries with padding. Returns (x, y_top, usable_w, y_bottom)."""
+    if pad is None:
+        pad = 0.3 * inch
+    margin = 0.4 * inch
+    x = max(pdf_x + pad, margin)
+    right = min(pdf_x + pdf_w - pad, pw - margin)
+    top = min(pdf_y + pdf_h - pad, ph - margin)
+    bottom = max(pdf_y + pad, margin)
+    return (x, top, right - x, bottom)
 
 
 def draw_writing_prompt_page(c, prompt):
-    """Writing prompt: image background with text overlay in detected blank region."""
+    """Writing prompt: image background with text overlay in detected blank region(s)."""
     img_path = find_image_for_prompt("writing-prompts", prompt["id"])
     img_path = ensure_image(img_path, "writing-prompts", prompt, mode="background")
     if not img_path:
@@ -285,7 +316,6 @@ def draw_writing_prompt_page(c, prompt):
 
     img = Image.open(img_path)
     iw, ih = img.size
-    # All pages portrait
     pw, ph = WIDTH, HEIGHT
     c.setPageSize((pw, ph))
     scale = max(pw / iw, ph / ih)
@@ -299,53 +329,73 @@ def draw_writing_prompt_page(c, prompt):
     c.setFillColor(Color(0, 0, 0, 0.45))
     c.rect(0, 0, pw, ph, fill=1, stroke=0)
 
-    # Detect blank region in the image
-    region = find_blank_region(img)
+    # Detect blank regions
+    regions = find_blank_regions(img)
+    pdf_regions = [_pixel_to_pdf(r, iw, ih, scale, x_off, y_off) for r in regions]
 
-    if region:
-        # Convert image-pixel region to PDF coordinates
-        rx, ry, rw, rh = region
-        # Image pixel -> PDF: scale and offset, then flip Y (PDF origin = bottom-left)
-        pdf_x = x_off + rx * scale
-        pdf_y = y_off + (ih - ry - rh) * scale  # flip Y
-        pdf_w = rw * scale
-        pdf_h = rh * scale
-
-        # Add padding inside the region
-        pad = 0.3 * inch
-        text_x = max(pdf_x + pad, 0.5 * inch)
-        text_w = min(pdf_w - 2 * pad, pw - 1.0 * inch)
-        text_top = pdf_y + pdf_h - pad
-        text_bottom = pdf_y + pad
-    else:
-        # Fallback: use full page with margins
-        text_x = 0.75 * inch
-        text_w = pw - 2 * 0.75 * inch
-        text_top = ph - 1.2 * inch
-        text_bottom = 0.75 * inch
-
-    usable = text_w
-
-    # Title
-    y = text_top
     title_font = "LibSansBold"
     title_size = 34
-    title_lines = wrap_text(c, prompt["title"], title_font, title_size, usable)
-    for line in title_lines:
-        draw_text_with_shadow(c, line, text_x, y, title_font, title_size, shadow_offset=3)
-        y -= title_size + 8
-
-    y -= 20
-
-    # Prompt text
     prompt_font = "LibSans"
     prompt_size = 21
-    prompt_lines = wrap_text(c, prompt["prompt"], prompt_font, prompt_size, usable)
-    for line in prompt_lines:
-        if y < text_bottom:
-            break
-        draw_text_with_shadow(c, line, text_x, y, prompt_font, prompt_size, shadow_offset=2)
-        y -= prompt_size + 7
+
+    # Filter to regions large enough for text (>= 3in wide, >= 1.5in tall)
+    min_w = 3.0 * inch
+    min_h = 1.5 * inch
+    usable_regions = [r for r in pdf_regions if r[2] >= min_w and r[3] >= min_h]
+
+    if len(usable_regions) >= 2:
+        # Two good regions: wider one for title, largest remaining for body
+        by_width = sorted(usable_regions, key=lambda r: r[2], reverse=True)
+        title_region = by_width[0]
+        remaining = [r for r in usable_regions if r is not title_region]
+        body_region = max(remaining, key=lambda r: r[2] * r[3])
+
+        tx, t_top, t_usable, t_bottom = _clamp_region(*title_region, pw, ph)
+        bx, b_top, b_usable, b_bottom = _clamp_region(*body_region, pw, ph)
+
+        # Title in the wider region
+        y = t_top
+        title_lines = wrap_text(c, prompt["title"], title_font, title_size, t_usable)
+        for line in title_lines:
+            draw_text_with_shadow(c, line, tx, y, title_font, title_size, shadow_offset=3)
+            y -= title_size + 8
+
+        # Body in the other region (overflow is OK — always render all lines)
+        y = b_top
+        prompt_lines = wrap_text(c, prompt["prompt"], prompt_font, prompt_size, b_usable)
+        for line in prompt_lines:
+            draw_text_with_shadow(c, line, bx, y, prompt_font, prompt_size, shadow_offset=2)
+            y -= prompt_size + 7
+
+    else:
+        # Single usable region (or none) — title + body together
+        if usable_regions:
+            tx, t_top, usable, t_bottom = _clamp_region(*usable_regions[0], pw, ph)
+        elif pdf_regions:
+            # Best we have, even if small — clamp to page
+            tx, t_top, usable, t_bottom = _clamp_region(*pdf_regions[0], pw, ph)
+        else:
+            # No blank region found — full page fallback
+            margin = 0.75 * inch
+            tx = margin
+            usable = pw - 2 * margin
+            t_top = ph - 1.2 * inch
+            t_bottom = margin
+
+        # Title
+        y = t_top
+        title_lines = wrap_text(c, prompt["title"], title_font, title_size, usable)
+        for line in title_lines:
+            draw_text_with_shadow(c, line, tx, y, title_font, title_size, shadow_offset=3)
+            y -= title_size + 8
+
+        y -= 20
+
+        # Body — always render all lines (overflow past region is OK)
+        prompt_lines = wrap_text(c, prompt["prompt"], prompt_font, prompt_size, usable)
+        for line in prompt_lines:
+            draw_text_with_shadow(c, line, tx, y, prompt_font, prompt_size, shadow_offset=2)
+            y -= prompt_size + 7
 
 
 def draw_silly_scene_page(c, prompt):
