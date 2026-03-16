@@ -74,8 +74,14 @@ def wrap_text(c, text, font, size, max_width):
     return lines
 
 
-def draw_text_with_shadow(c, text, x, y, font, size, shadow_offset=2):
+def draw_text_with_shadow(c, text, x, y, font, size, shadow_offset=2, align="left", box_w=None):
     c.setFont(font, size)
+    if align == "center" and box_w:
+        tw = c.stringWidth(text, font, size)
+        x = x + (box_w - tw) / 2
+    elif align == "right" and box_w:
+        tw = c.stringWidth(text, font, size)
+        x = x + box_w - tw
     c.setFillColor(Color(0, 0, 0, 0.6))
     c.drawString(x + shadow_offset, y - shadow_offset, text)
     c.setFillColor(Color(1, 1, 1, 1))
@@ -95,12 +101,18 @@ def api_prompts():
     result = []
     for p in prompts:
         img_path = _find_image(p["id"])
+        img_w, img_h = 0, 0
+        if img_path:
+            img = Image.open(img_path)
+            img_w, img_h = img.size
         result.append({
             "id": p["id"],
             "title": p["title"],
             "prompt": p["prompt"],
             "theme": p["theme"],
             "has_image": img_path is not None,
+            "img_w": img_w,
+            "img_h": img_h,
         })
     return jsonify(result)
 
@@ -141,14 +153,24 @@ def api_generate_pdf():
         pw, ph = WIDTH, HEIGHT
         c.setPageSize((pw, ph))
 
-        # Draw background image (cover full page)
+        # Draw background image with offset
         img = Image.open(img_path)
         iw, ih = img.size
         scale = max(pw / iw, ph / ih)
         draw_w, draw_h = iw * scale, ih * scale
-        x_off = (pw - draw_w) / 2
-        y_off = (ph - draw_h) / 2
+        # img_offset: 0.5 = centered (default)
+        img_ox = layout.get("img_offset_x", 0.5)
+        img_oy = layout.get("img_offset_y", 0.5)
+        extra_x = draw_w - pw
+        extra_y = draw_h - ph
+        x_off = -extra_x * img_ox
+        y_off = -extra_y * (1 - img_oy)  # PDF Y is flipped
+        c.saveState()
+        clip = c.beginPath()
+        clip.rect(0, 0, pw, ph)
+        c.clipPath(clip, stroke=0)
         c.drawImage(ImageReader(img), x_off, y_off, draw_w, draw_h)
+        c.restoreState()
 
         # Dark overlay
         c.setFillColor(Color(0, 0, 0, 0.45))
@@ -158,13 +180,15 @@ def api_generate_pdf():
         tb = layout["title_box"]
         tx = tb["x"] * pw
         tw = tb["w"] * pw
-        # Convert from top-left origin (web) to bottom-left origin (PDF)
         t_top_pdf = ph - tb["y"] * ph
         title_font = "LibSansBold"
         title_size = layout.get("title_size", 34)
+        title_align = layout.get("title_align", "left")
+        title_text = layout.get("title_text", prompt["title"])
         y = t_top_pdf
-        for line in wrap_text(c, prompt["title"], title_font, title_size, tw):
-            draw_text_with_shadow(c, line, tx, y, title_font, title_size, shadow_offset=3)
+        for line in wrap_text(c, title_text, title_font, title_size, tw):
+            draw_text_with_shadow(c, line, tx, y, title_font, title_size,
+                                  shadow_offset=3, align=title_align, box_w=tw)
             y -= title_size + 8
 
         # Body box
@@ -174,9 +198,12 @@ def api_generate_pdf():
         b_top_pdf = ph - bb["y"] * ph
         body_font = "LibSans"
         body_size = layout.get("body_size", 21)
+        body_align = layout.get("body_align", "left")
+        body_text = layout.get("body_text", prompt["prompt"])
         y = b_top_pdf
-        for line in wrap_text(c, prompt["prompt"], body_font, body_size, bw):
-            draw_text_with_shadow(c, line, bx, y, body_font, body_size, shadow_offset=2)
+        for line in wrap_text(c, body_text, body_font, body_size, bw):
+            draw_text_with_shadow(c, line, bx, y, body_font, body_size,
+                                  shadow_offset=2, align=body_align, box_w=bw)
             y -= body_size + 7
 
         c.showPage()
@@ -210,23 +237,31 @@ body { font-family: 'Liberation Sans', Arial, sans-serif; background: #1a1a2e; c
 
 /* Main area */
 #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-#toolbar { padding: 8px 16px; background: #16213e; border-bottom: 1px solid #333; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-#toolbar button { padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; }
-#toolbar .btn-primary { background: #3b82f6; color: #fff; }
-#toolbar .btn-primary:hover { background: #2563eb; }
-#toolbar .btn-success { background: #22c55e; color: #fff; }
-#toolbar .btn-success:hover { background: #16a34a; }
-#toolbar .btn-nav { background: #475569; color: #fff; }
-#toolbar .btn-nav:hover { background: #64748b; }
-#toolbar label { font-size: 13px; display: flex; align-items: center; gap: 4px; }
-#toolbar input[type=number] { width: 50px; padding: 2px 4px; background: #1e293b; color: #eee; border: 1px solid #444; border-radius: 3px; }
-#toolbar .page-info { font-size: 13px; color: #94a3b8; }
-#toolbar .spacer { flex: 1; }
-#toolbar .status { font-size: 12px; color: #94a3b8; }
+
+/* Toolbar rows */
+.toolbar-row { padding: 6px 16px; background: #16213e; border-bottom: 1px solid #333; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.toolbar-row button { padding: 5px 14px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; }
+.toolbar-row .btn-primary { background: #3b82f6; color: #fff; }
+.toolbar-row .btn-primary:hover { background: #2563eb; }
+.toolbar-row .btn-success { background: #22c55e; color: #fff; }
+.toolbar-row .btn-success:hover { background: #16a34a; }
+.toolbar-row .btn-nav { background: #475569; color: #fff; }
+.toolbar-row .btn-nav:hover { background: #64748b; }
+.toolbar-row .btn-warn { background: #f59e0b; color: #000; }
+.toolbar-row .btn-warn:hover { background: #d97706; }
+.toolbar-row label { font-size: 12px; display: flex; align-items: center; gap: 4px; }
+.toolbar-row input[type=number] { width: 48px; padding: 2px 4px; background: #1e293b; color: #eee; border: 1px solid #444; border-radius: 3px; font-size: 12px; }
+.toolbar-row select { padding: 2px 4px; background: #1e293b; color: #eee; border: 1px solid #444; border-radius: 3px; font-size: 12px; }
+.toolbar-row .page-info { font-size: 12px; color: #94a3b8; }
+.toolbar-row .spacer { flex: 1; }
+.toolbar-row .status { font-size: 12px; color: #94a3b8; }
+.toolbar-row .sep { width: 1px; height: 20px; background: #444; }
+.align-btn { width: 28px; height: 26px; padding: 0 !important; display: inline-flex; align-items: center; justify-content: center; font-size: 14px !important; }
+.align-btn.active { background: #2563eb !important; }
 
 #canvas-wrap { flex: 1; display: flex; align-items: center; justify-content: center; overflow: auto; padding: 20px; }
 
-/* The SVG container (letter aspect ratio) */
+/* The SVG container */
 #page-container { position: relative; background: #000; box-shadow: 0 4px 24px rgba(0,0,0,0.5); }
 #page-container svg { display: block; }
 
@@ -236,13 +271,20 @@ body { font-family: 'Liberation Sans', Arial, sans-serif; background: #1a1a2e; c
 .text-box.selected rect.bg { stroke: #3b82f6; stroke-width: 2; stroke-dasharray: 6 3; }
 .text-box text { fill: white; font-family: 'Liberation Sans', Arial, sans-serif; }
 .text-box .title-text { font-weight: bold; }
-
-/* Resize handles */
 .resize-handle { fill: #3b82f6; stroke: white; stroke-width: 1; cursor: nwse-resize; opacity: 0; }
 .text-box.selected .resize-handle { opacity: 1; }
-
-/* Reset button on each page */
 .no-image-msg { text-anchor: middle; fill: #f87171; font-size: 18px; }
+
+/* Text edit modal */
+#edit-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100; align-items: center; justify-content: center; }
+#edit-modal.open { display: flex; }
+#edit-modal .modal-box { background: #1e293b; border-radius: 8px; padding: 20px; width: 520px; max-width: 90vw; }
+#edit-modal h3 { margin-bottom: 12px; font-size: 16px; }
+#edit-modal textarea { width: 100%; height: 120px; background: #0f172a; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 8px; font-family: inherit; font-size: 14px; resize: vertical; }
+#edit-modal .modal-btns { margin-top: 12px; display: flex; gap: 8px; justify-content: flex-end; }
+#edit-modal .modal-btns button { padding: 6px 18px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; }
+#edit-modal .btn-cancel { background: #475569; color: #fff; }
+#edit-modal .btn-save { background: #3b82f6; color: #fff; }
 </style>
 </head>
 <body>
@@ -252,15 +294,26 @@ body { font-family: 'Liberation Sans', Arial, sans-serif; background: #1a1a2e; c
     <div id="prompt-list"></div>
   </div>
   <div id="main">
-    <div id="toolbar">
-      <button class="btn-nav" onclick="prevPage()">&larr; Prev</button>
+    <div class="toolbar-row">
+      <button class="btn-nav" onclick="prevPage()">&larr;</button>
       <span class="page-info" id="page-info">1 / 10</span>
-      <button class="btn-nav" onclick="nextPage()">Next &rarr;</button>
-      <label>Title size: <input type="number" id="title-size" value="34" min="10" max="72" onchange="onSizeChange()"></label>
-      <label>Body size: <input type="number" id="body-size" value="21" min="10" max="48" onchange="onSizeChange()"></label>
-      <button class="btn-primary" onclick="resetCurrent()">Reset Layout</button>
+      <button class="btn-nav" onclick="nextPage()">&rarr;</button>
+      <span class="sep"></span>
+      <label>Title: <input type="number" id="title-size" value="34" min="10" max="72" onchange="onSizeChange()"></label>
+      <button class="align-btn" data-target="title" data-align="left" onclick="setAlign(this)" title="Left">&#9776;</button>
+      <button class="align-btn" data-target="title" data-align="center" onclick="setAlign(this)" title="Center">&#9778;</button>
+      <button class="align-btn" data-target="title" data-align="right" onclick="setAlign(this)" title="Right">&#9783;</button>
+      <button class="btn-primary" style="font-size:11px" onclick="editText('title')">Edit Title</button>
+      <span class="sep"></span>
+      <label>Body: <input type="number" id="body-size" value="21" min="10" max="48" onchange="onSizeChange()"></label>
+      <button class="align-btn" data-target="body" data-align="left" onclick="setAlign(this)" title="Left">&#9776;</button>
+      <button class="align-btn" data-target="body" data-align="center" onclick="setAlign(this)" title="Center">&#9778;</button>
+      <button class="align-btn" data-target="body" data-align="right" onclick="setAlign(this)" title="Right">&#9783;</button>
+      <button class="btn-primary" style="font-size:11px" onclick="editText('body')">Edit Body</button>
+      <span class="sep"></span>
+      <button class="btn-warn" onclick="resetCurrent()">Reset</button>
       <span class="spacer"></span>
-      <span class="status" id="status"></span>
+      <span class="status" id="status">Drag background to pan image</span>
       <button class="btn-success" id="generate-btn" onclick="generatePDF()">Generate PDF</button>
     </div>
     <div id="canvas-wrap">
@@ -269,18 +322,27 @@ body { font-family: 'Liberation Sans', Arial, sans-serif; background: #1a1a2e; c
   </div>
 </div>
 
+<!-- Text edit modal -->
+<div id="edit-modal">
+  <div class="modal-box">
+    <h3 id="edit-modal-title">Edit Title</h3>
+    <textarea id="edit-modal-text"></textarea>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeEditModal()">Cancel</button>
+      <button class="btn-save" onclick="saveEditModal()">Save</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ── State ──────────────────────────────────────────────────────────────
 let prompts = [];
 let currentIdx = 0;
-let layouts = {};  // keyed by prompt id
-let selectedBox = null;  // "title" or "body"
+let layouts = {};
+let selectedBox = null;
 
-// Page constants (points, matches PDF)
 const PW = 612, PH = 792;
-const MARGIN_FRAC = 72 / 612;  // 1" = 72pt on 612pt page
-
-// Display scale — fit the SVG into the viewport
+const MARGIN_FRAC = 72 / 612;
 let displayScale = 1;
 
 // ── Default layout ────────────────────────────────────────────────────
@@ -289,9 +351,24 @@ function defaultLayout(prompt) {
         id: prompt.id,
         title_size: 34,
         body_size: 21,
+        title_align: "left",
+        body_align: "left",
+        title_text: prompt.title,
+        body_text: prompt.prompt,
+        img_offset_x: 0.5,
+        img_offset_y: 0.5,
         title_box: { x: MARGIN_FRAC, y: 0.08, w: 1 - 2 * MARGIN_FRAC, h: 0.18 },
         body_box:  { x: MARGIN_FRAC, y: 0.30, w: 1 - 2 * MARGIN_FRAC, h: 0.55 },
     };
+}
+
+// ── Compute image geometry (how much pan room) ────────────────────────
+function imgGeometry(prompt) {
+    if (!prompt.img_w) return { extraX: 0, extraY: 0, drawW: PW, drawH: PH };
+    const iw = prompt.img_w, ih = prompt.img_h;
+    const scale = Math.max(PW / iw, PH / ih);
+    const drawW = iw * scale, drawH = ih * scale;
+    return { extraX: drawW - PW, extraY: drawH - PH, drawW, drawH };
 }
 
 // ── Init ──────────────────────────────────────────────────────────────
@@ -338,6 +415,57 @@ function onSizeChange() {
     renderPage();
 }
 
+// ── Alignment ─────────────────────────────────────────────────────────
+function setAlign(btn) {
+    const target = btn.getAttribute("data-target");
+    const align = btn.getAttribute("data-align");
+    const p = prompts[currentIdx];
+    layouts[p.id][target + "_align"] = align;
+    renderPage();
+}
+
+function updateAlignButtons() {
+    const p = prompts[currentIdx];
+    const L = layouts[p.id];
+    document.querySelectorAll(".align-btn").forEach(btn => {
+        const target = btn.getAttribute("data-target");
+        const align = btn.getAttribute("data-align");
+        btn.classList.toggle("active", L[target + "_align"] === align);
+    });
+}
+
+// ── Text editing modal ────────────────────────────────────────────────
+let editTarget = null;
+
+function editText(target) {
+    editTarget = target;
+    const p = prompts[currentIdx];
+    const L = layouts[p.id];
+    document.getElementById("edit-modal-title").textContent = target === "title" ? "Edit Title" : "Edit Body";
+    document.getElementById("edit-modal-text").value = L[target + "_text"];
+    document.getElementById("edit-modal").classList.add("open");
+    setTimeout(() => document.getElementById("edit-modal-text").focus(), 50);
+}
+
+function closeEditModal() {
+    document.getElementById("edit-modal").classList.remove("open");
+    editTarget = null;
+}
+
+function saveEditModal() {
+    if (!editTarget) return;
+    const p = prompts[currentIdx];
+    const L = layouts[p.id];
+    L[editTarget + "_text"] = document.getElementById("edit-modal-text").value;
+    closeEditModal();
+    renderPage();
+}
+
+// Handle Escape and Enter in modal
+document.getElementById("edit-modal-text").addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeEditModal();
+});
+
 // ── Render ────────────────────────────────────────────────────────────
 function renderPage() {
     const p = prompts[currentIdx];
@@ -345,8 +473,8 @@ function renderPage() {
     document.getElementById("page-info").textContent = `${currentIdx + 1} / ${prompts.length}`;
     document.getElementById("title-size").value = L.title_size;
     document.getElementById("body-size").value = L.body_size;
+    updateAlignButtons();
 
-    // Compute display size to fit viewport
     const wrap = document.getElementById("canvas-wrap");
     const maxW = wrap.clientWidth - 40;
     const maxH = wrap.clientHeight - 40;
@@ -358,61 +486,65 @@ function renderPage() {
     container.style.width = svgW + "px";
     container.style.height = svgH + "px";
 
-    // Build SVG
     let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${PW} ${PH}">`;
+    svg += `<defs><clipPath id="page-clip"><rect x="0" y="0" width="${PW}" height="${PH}"/></clipPath></defs>`;
 
-    // Background image
     if (p.has_image) {
-        svg += `<image href="/api/image/${p.id}" x="0" y="0" width="${PW}" height="${PH}" preserveAspectRatio="xMidYMid slice"/>`;
+        const geo = imgGeometry(p);
+        const imgX = -geo.extraX * L.img_offset_x;
+        const imgY = -geo.extraY * L.img_offset_y;
+        svg += `<g clip-path="url(#page-clip)">`;
+        svg += `<image href="/api/image/${p.id}" x="${imgX}" y="${imgY}" width="${geo.drawW}" height="${geo.drawH}" preserveAspectRatio="none"/>`;
+        svg += `</g>`;
         // Dark overlay
         svg += `<rect x="0" y="0" width="${PW}" height="${PH}" fill="rgba(0,0,0,0.45)"/>`;
+        // Invisible rect for background drag (behind text boxes)
+        svg += `<rect class="bg-drag" x="0" y="0" width="${PW}" height="${PH}" fill="transparent" style="cursor: grab;"/>`;
     } else {
         svg += `<rect x="0" y="0" width="${PW}" height="${PH}" fill="#222"/>`;
         svg += `<text class="no-image-msg" x="${PW/2}" y="${PH/2}">No image for prompt ${p.id}</text>`;
     }
 
-    // 1" margin guides (subtle dashed lines)
+    // 1" margin guides
     const m = 72;
     svg += `<rect x="${m}" y="${m}" width="${PW - 2*m}" height="${PH - 2*m}" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="0.5" stroke-dasharray="4 4"/>`;
 
-    // Title box
-    svg += renderTextBox("title", L.title_box, p.title, L.title_size, true);
-    // Body box
-    svg += renderTextBox("body", L.body_box, p.prompt, L.body_size, false);
+    svg += renderTextBox("title", L.title_box, L.title_text, L.title_size, true, L.title_align);
+    svg += renderTextBox("body", L.body_box, L.body_text, L.body_size, false, L.body_align);
 
     svg += `</svg>`;
     container.innerHTML = svg;
-
-    // Attach event listeners
     attachDragListeners();
 }
 
-function renderTextBox(id, box, text, fontSize, isBold) {
+function renderTextBox(id, box, text, fontSize, isBold, align) {
     const x = box.x * PW, y = box.y * PH, w = box.w * PW, h = box.h * PH;
     const isSelected = selectedBox === id;
     let g = `<g class="text-box ${isSelected ? 'selected' : ''}" data-box="${id}">`;
     g += `<rect class="bg" x="${x}" y="${y}" width="${w}" height="${h}"/>`;
 
-    // Wrap text into lines
     const lines = wrapTextSVG(text, fontSize, w - 16, isBold);
     const lineHeight = fontSize * 1.25;
-    let ty = y + fontSize + 8;
+    const pad = 8;
+    let ty = y + fontSize + pad;
+
+    let anchor = "start", textX = x + pad;
+    if (align === "center") { anchor = "middle"; textX = x + w / 2; }
+    else if (align === "right") { anchor = "end"; textX = x + w - pad; }
+
     for (const line of lines) {
-        if (ty > y + h - 4) break;  // clip to box visually
-        g += `<text x="${x + 8}" y="${ty}" font-size="${fontSize}" class="${isBold ? 'title-text' : ''}">${escHtml(line)}</text>`;
+        if (ty > y + h - 4) break;
+        g += `<text x="${textX}" y="${ty}" font-size="${fontSize}" text-anchor="${anchor}" class="${isBold ? 'title-text' : ''}">${escHtml(line)}</text>`;
         ty += lineHeight;
     }
 
-    // Resize handle (bottom-right corner)
     const hs = 12;
     g += `<rect class="resize-handle" data-box="${id}" x="${x + w - hs}" y="${y + h - hs}" width="${hs}" height="${hs}"/>`;
-
     g += `</g>`;
     return g;
 }
 
 function wrapTextSVG(text, fontSize, maxWidth, isBold) {
-    // Approximate character width (Liberation Sans is ~0.55em for regular, ~0.58 for bold)
     const charW = fontSize * (isBold ? 0.58 : 0.52);
     const words = text.split(/\s+/);
     const lines = [];
@@ -434,105 +566,94 @@ function escHtml(s) {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-// ── Drag & Resize ─────────────────────────────────────────────────────
+// ── Drag, Resize & Image Pan ──────────────────────────────────────────
+let dragState = null;
+
 function attachDragListeners() {
     const svg = document.querySelector("#page-container svg");
     if (!svg) return;
-
-    // Click to select
     svg.addEventListener("mousedown", onMouseDown);
     svg.addEventListener("mousemove", onMouseMove);
     svg.addEventListener("mouseup", onMouseUp);
-    // Deselect on background click
-    svg.addEventListener("click", (e) => {
-        if (!e.target.closest(".text-box")) {
-            selectedBox = null;
-            renderPage();
-        }
-    });
+    svg.addEventListener("mouseleave", onMouseUp);
 }
-
-let dragState = null;
 
 function getSVGPoint(e) {
     const svg = document.querySelector("#page-container svg");
     const rect = svg.getBoundingClientRect();
-    return {
-        x: (e.clientX - rect.left) / displayScale,
-        y: (e.clientY - rect.top) / displayScale
-    };
+    return { x: (e.clientX - rect.left) / displayScale, y: (e.clientY - rect.top) / displayScale };
 }
 
 function onMouseDown(e) {
     const handle = e.target.closest(".resize-handle");
     const box = e.target.closest(".text-box");
-    if (!box) return;
-
-    const boxId = (handle || box.querySelector("[data-box]")).getAttribute("data-box") ||
-                  box.getAttribute("data-box") || box.querySelector(".resize-handle")?.getAttribute("data-box");
-
-    // Get box id from the group's data attribute
-    const bid = box.getAttribute("data-box");
-    if (!bid) return;
-
-    selectedBox = bid;
-
+    const bgDrag = e.target.closest(".bg-drag");
     const pt = getSVGPoint(e);
     const p = prompts[currentIdx];
     const L = layouts[p.id];
-    const bx = L[bid + "_box"];
 
-    if (handle) {
-        // Resize mode
+    if (box) {
+        const bid = box.getAttribute("data-box");
+        if (!bid) return;
+        selectedBox = bid;
+        const bx = L[bid + "_box"];
+
+        if (handle) {
+            dragState = { mode: "resize", boxId: bid, startX: pt.x, startY: pt.y, origW: bx.w, origH: bx.h };
+        } else {
+            dragState = { mode: "move", boxId: bid, startX: pt.x, startY: pt.y, origX: bx.x, origY: bx.y };
+        }
+        e.preventDefault();
+        renderPage();
+    } else if (bgDrag) {
+        // Image pan mode
+        selectedBox = null;
         dragState = {
-            mode: "resize",
-            boxId: bid,
+            mode: "pan",
             startX: pt.x,
             startY: pt.y,
-            origW: bx.w,
-            origH: bx.h,
+            origOX: L.img_offset_x,
+            origOY: L.img_offset_y,
         };
-    } else {
-        // Move mode
-        dragState = {
-            mode: "move",
-            boxId: bid,
-            startX: pt.x,
-            startY: pt.y,
-            origX: bx.x,
-            origY: bx.y,
-        };
+        e.preventDefault();
+        renderPage();
     }
-
-    e.preventDefault();
-    renderPage();
 }
 
 function onMouseMove(e) {
     if (!dragState) return;
     const pt = getSVGPoint(e);
-    const dx = (pt.x - dragState.startX) / PW;
-    const dy = (pt.y - dragState.startY) / PH;
-
     const p = prompts[currentIdx];
     const L = layouts[p.id];
-    const bx = L[dragState.boxId + "_box"];
 
-    if (dragState.mode === "move") {
-        bx.x = clamp(dragState.origX + dx, 0, 1 - bx.w);
-        bx.y = clamp(dragState.origY + dy, 0, 1 - bx.h);
+    if (dragState.mode === "pan") {
+        const geo = imgGeometry(p);
+        if (geo.extraX > 0) {
+            const dxFrac = -(pt.x - dragState.startX) / geo.extraX;
+            L.img_offset_x = clamp(dragState.origOX + dxFrac, 0, 1);
+        }
+        if (geo.extraY > 0) {
+            const dyFrac = -(pt.y - dragState.startY) / geo.extraY;
+            L.img_offset_y = clamp(dragState.origOY + dyFrac, 0, 1);
+        }
     } else {
-        bx.w = clamp(dragState.origW + dx, 0.1, 1 - bx.x);
-        bx.h = clamp(dragState.origH + dy, 0.05, 1 - bx.y);
+        const dx = (pt.x - dragState.startX) / PW;
+        const dy = (pt.y - dragState.startY) / PH;
+        const bx = L[dragState.boxId + "_box"];
+        if (dragState.mode === "move") {
+            bx.x = clamp(dragState.origX + dx, 0, 1 - bx.w);
+            bx.y = clamp(dragState.origY + dy, 0, 1 - bx.h);
+        } else {
+            bx.w = clamp(dragState.origW + dx, 0.1, 1 - bx.x);
+            bx.h = clamp(dragState.origH + dy, 0.05, 1 - bx.y);
+        }
     }
 
     renderPage();
     e.preventDefault();
 }
 
-function onMouseUp() {
-    dragState = null;
-}
+function onMouseUp() { dragState = null; }
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
@@ -544,7 +665,6 @@ async function generatePDF() {
     btn.textContent = "Generating...";
     status.textContent = "";
 
-    // Only include prompts that have images
     const toGenerate = prompts.filter(p => p.has_image).map(p => layouts[p.id]);
 
     try {
@@ -572,9 +692,10 @@ async function generatePDF() {
 
 // ── Keyboard shortcuts ────────────────────────────────────────────────
 document.addEventListener("keydown", (e) => {
-    if (e.target.tagName === "INPUT") return;
+    if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
     if (e.key === "ArrowLeft") prevPage();
     if (e.key === "ArrowRight") nextPage();
+    if (e.key === "Escape") { selectedBox = null; renderPage(); }
     if (e.key === "Tab") {
         e.preventDefault();
         selectedBox = selectedBox === "title" ? "body" : "title";
