@@ -10,6 +10,7 @@ Usage:
 """
 
 import argparse
+import base64
 import json
 import os
 import glob
@@ -266,12 +267,18 @@ def api_image(prompt_id):
 
 @app.route("/api/generate-pdf", methods=["POST"])
 def api_generate_pdf():
-    """Generate PDF by rendering each page as SVG then converting with cairosvg."""
+    """Generate PDF by rendering each page as SVG then converting with cairosvg.
+
+    When blur filters are used, renders SVG -> PNG (300 DPI) -> PDF to ensure
+    filters are rasterized correctly (cairosvg skips feGaussianBlur in direct
+    SVG-to-PDF conversion).
+    """
     data = request.get_json()
     layouts = data.get("layouts", [])
     prompts_data = {p["id"]: p for p in _load_prompts()["prompts"]}
 
     writer = PdfWriter()
+    PDF_DPI = 300
 
     for layout in layouts:
         pid = layout["id"]
@@ -294,10 +301,38 @@ def api_generate_pdf():
 
         svg_str = build_page_svg(layout, prompt, img_src, editor_mode=False)
 
-        # Convert SVG to PDF
-        pdf_buf = BytesIO()
-        cairosvg.svg2pdf(bytestring=svg_str.encode("utf-8"),
-                         write_to=pdf_buf, unsafe=True)
+        has_blur = (layout.get("title_shadow_blur", 0) > 0 or
+                    layout.get("body_shadow_blur", 0) > 0)
+
+        if has_blur:
+            # cairosvg ignores feGaussianBlur in direct SVG->PDF.
+            # Workaround: render SVG -> PNG at high DPI, then embed in PDF.
+            pw = layout.get("page_w", PW)
+            ph = layout.get("page_h", PH)
+            png_buf = BytesIO()
+            cairosvg.svg2png(bytestring=svg_str.encode("utf-8"),
+                             write_to=png_buf, unsafe=True, dpi=PDF_DPI)
+            png_buf.seek(0)
+
+            # Build a simple SVG that embeds the rasterized PNG at page size
+            png_b64 = base64.b64encode(png_buf.read()).decode("ascii")
+            wrapper_svg = (
+                f'<svg xmlns="http://www.w3.org/2000/svg" '
+                f'xmlns:xlink="http://www.w3.org/1999/xlink" '
+                f'width="{pw}pt" height="{ph}pt" viewBox="0 0 {pw} {ph}">'
+                f'<image href="data:image/png;base64,{png_b64}" '
+                f'x="0" y="0" width="{pw}" height="{ph}"/>'
+                f'</svg>'
+            )
+            pdf_buf = BytesIO()
+            cairosvg.svg2pdf(bytestring=wrapper_svg.encode("utf-8"),
+                             write_to=pdf_buf)
+        else:
+            # No blur — direct SVG-to-PDF preserves vector text
+            pdf_buf = BytesIO()
+            cairosvg.svg2pdf(bytestring=svg_str.encode("utf-8"),
+                             write_to=pdf_buf, unsafe=True)
+
         pdf_buf.seek(0)
         reader = PdfReader(pdf_buf)
         writer.add_page(reader.pages[0])
