@@ -10,7 +10,6 @@ Usage:
 """
 
 import argparse
-import base64
 import json
 import os
 import glob
@@ -18,7 +17,7 @@ import html
 from io import BytesIO
 
 from flask import Flask, request, jsonify, send_file, send_from_directory
-from PIL import Image, ImageFilter
+from PIL import Image
 import cairosvg
 from pypdf import PdfWriter, PdfReader
 
@@ -122,22 +121,34 @@ def _build_text_svg(text, box, font_size, is_bold, align, text_color,
 
     # Main text pass
     if layer != "shadow_only":
-        stroke_attrs = ""
-        if stroke_width > 0 and stroke_color:
-            stroke_attrs = (
-                f' stroke="{stroke_color}" stroke-width="{stroke_width}" '
-                f'stroke-opacity="{stroke_opacity}" paint-order="stroke fill" '
-                f'stroke-linejoin="round"')
+        has_stroke = stroke_width > 0 and stroke_color
+        font_attrs = (f'font-size="{font_size}" font-weight="{weight}" '
+                      f'font-family="Liberation Sans, Arial, sans-serif" '
+                      f'text-anchor="{anchor}"')
+
+        # Stroke pass: draw stroke-only text first (behind fill)
+        if has_stroke:
+            ty = y_top + font_size + pad
+            for line in lines:
+                if ty > y_top + h - 4:
+                    break
+                escaped = _esc(line)
+                svg += (f'<text x="{tx}" y="{ty}" {font_attrs} '
+                        f'fill="none" stroke="{stroke_color}" '
+                        f'stroke-width="{stroke_width}" '
+                        f'stroke-opacity="{stroke_opacity}" '
+                        f'stroke-linejoin="round">'
+                        f'{escaped}</text>\n')
+                ty += line_h
+
+        # Fill pass: draw filled text on top
         ty = y_top + font_size + pad
         for line in lines:
             if ty > y_top + h - 4:
                 break
             escaped = _esc(line)
-            svg += (f'<text x="{tx}" y="{ty}" '
-                    f'font-size="{font_size}" font-weight="{weight}" '
-                    f'font-family="Liberation Sans, Arial, sans-serif" '
-                    f'text-anchor="{anchor}" fill="{text_color}"'
-                    f'{stroke_attrs}>'
+            svg += (f'<text x="{tx}" y="{ty}" {font_attrs} '
+                    f'fill="{text_color}">'
                     f'{escaped}</text>\n')
             ty += line_h
     return svg
@@ -169,16 +180,7 @@ def build_page_svg(layout, prompt, img_src, editor_mode=False, layer=None):
         svg = (f'<svg xmlns="http://www.w3.org/2000/svg" '
                f'width="{pw}pt" height="{ph}pt" viewBox="0 0 {pw} {ph}">\n')
 
-    # Blur filters for shadows
-    title_blur = layout.get("title_shadow_blur", 0)
-    body_blur = layout.get("body_shadow_blur", 0)
     defs = f'<clipPath id="page-clip"><rect x="0" y="0" width="{pw}" height="{ph}"/></clipPath>\n'
-    if title_blur > 0:
-        defs += (f'<filter id="title-blur" x="-50%" y="-50%" width="200%" height="200%">'
-                 f'<feGaussianBlur in="SourceGraphic" stdDeviation="{title_blur}"/></filter>\n')
-    if body_blur > 0:
-        defs += (f'<filter id="body-blur" x="-50%" y="-50%" width="200%" height="200%">'
-                 f'<feGaussianBlur in="SourceGraphic" stdDeviation="{body_blur}"/></filter>\n')
     svg += f'<defs>{defs}</defs>\n'
 
     # Background image (skip for shadow_only and text_only layers)
@@ -210,6 +212,8 @@ def build_page_svg(layout, prompt, img_src, editor_mode=False, layer=None):
         title_color = layout.get("title_color", "#ffffff")
         body_color = layout.get("body_color", "#ffffff")
         text_layer = "no_shadow" if layer == "text_only" else layer
+        title_shadow_on = layout.get("title_shadow_on", True)
+        body_shadow_on = layout.get("body_shadow_on", True)
 
         # Title text
         svg += _build_text_svg(
@@ -220,11 +224,9 @@ def build_page_svg(layout, prompt, img_src, editor_mode=False, layer=None):
             layout.get("title_align", "left"),
             title_color,
             layout.get("title_shadow_color", "#000000"),
-            layout.get("title_shadow_dx", 2),
-            layout.get("title_shadow_dy", 2),
-            title_blur,
-            pw, ph,
-            "title-blur" if title_blur > 0 else "",
+            layout.get("title_shadow_dx", 2) if title_shadow_on else 0,
+            layout.get("title_shadow_dy", 2) if title_shadow_on else 0,
+            0, pw, ph, "",
             layer=text_layer,
             stroke_color=layout.get("title_stroke_color", "#000000"),
             stroke_width=layout.get("title_stroke_width", 0),
@@ -240,11 +242,9 @@ def build_page_svg(layout, prompt, img_src, editor_mode=False, layer=None):
             layout.get("body_align", "left"),
             body_color,
             layout.get("body_shadow_color", "#000000"),
-            layout.get("body_shadow_dx", 2),
-            layout.get("body_shadow_dy", 2),
-            body_blur,
-            pw, ph,
-            "body-blur" if body_blur > 0 else "",
+            layout.get("body_shadow_dx", 2) if body_shadow_on else 0,
+            layout.get("body_shadow_dy", 2) if body_shadow_on else 0,
+            0, pw, ph, "",
             layer=text_layer,
             stroke_color=layout.get("body_stroke_color", "#000000"),
             stroke_width=layout.get("body_stroke_width", 0),
@@ -304,7 +304,6 @@ def api_generate_pdf():
     prompts_data = {p["id"]: p for p in _load_prompts()["prompts"]}
 
     writer = PdfWriter()
-    PDF_DPI = 300
 
     for layout in layouts:
         pid = layout["id"]
@@ -325,79 +324,10 @@ def api_generate_pdf():
         layout["img_w"] = img.size[0]
         layout["img_h"] = img.size[1]
 
-        has_blur = (layout.get("title_shadow_blur", 0) > 0 or
-                    layout.get("body_shadow_blur", 0) > 0)
-
-        if has_blur:
-            # cairosvg does NOT support feGaussianBlur at all (not even in
-            # svg2png).  Workaround: render three layers separately, blur
-            # the shadow layer with Pillow, composite, then embed the
-            # rasterised result in the PDF.
-            pw = layout.get("page_w", PW)
-            ph = layout.get("page_h", PH)
-            scale = PDF_DPI / 72  # pt → px conversion factor
-
-            # 1. Background + overlay (no text)
-            bg_svg = build_page_svg(layout, prompt, img_src,
-                                    editor_mode=False, layer="bg_only")
-            bg_buf = BytesIO()
-            cairosvg.svg2png(bytestring=bg_svg.encode("utf-8"),
-                             write_to=bg_buf, unsafe=True, dpi=PDF_DPI)
-            bg_buf.seek(0)
-            bg_img = Image.open(bg_buf).convert("RGBA")
-
-            # 2. Shadow text only (transparent background)
-            shadow_svg = build_page_svg(layout, prompt, img_src,
-                                        editor_mode=False, layer="shadow_only")
-            shadow_buf = BytesIO()
-            cairosvg.svg2png(bytestring=shadow_svg.encode("utf-8"),
-                             write_to=shadow_buf, unsafe=True, dpi=PDF_DPI)
-            shadow_buf.seek(0)
-            shadow_img = Image.open(shadow_buf).convert("RGBA")
-
-            # 3. Main text only (transparent background, no shadows)
-            text_svg = build_page_svg(layout, prompt, img_src,
-                                      editor_mode=False, layer="text_only")
-            text_buf = BytesIO()
-            cairosvg.svg2png(bytestring=text_svg.encode("utf-8"),
-                             write_to=text_buf, unsafe=True, dpi=PDF_DPI)
-            text_buf.seek(0)
-            text_img = Image.open(text_buf).convert("RGBA")
-
-            # 4. Apply Gaussian blur to the shadow layer with Pillow.
-            #    SVG stdDeviation is in pt; convert to pixels at render DPI.
-            title_b = layout.get("title_shadow_blur", 0)
-            body_b = layout.get("body_shadow_blur", 0)
-            pil_radius = max(title_b, body_b) * scale
-            shadow_img = shadow_img.filter(
-                ImageFilter.GaussianBlur(radius=pil_radius))
-
-            # 5. Composite: background → blurred shadow → main text
-            composite = Image.alpha_composite(bg_img, shadow_img)
-            composite = Image.alpha_composite(composite, text_img)
-
-            # 6. Embed composite PNG in PDF via SVG wrapper
-            comp_buf = BytesIO()
-            composite.save(comp_buf, format="PNG")
-            comp_buf.seek(0)
-            png_b64 = base64.b64encode(comp_buf.read()).decode("ascii")
-            wrapper_svg = (
-                f'<svg xmlns="http://www.w3.org/2000/svg" '
-                f'xmlns:xlink="http://www.w3.org/1999/xlink" '
-                f'width="{pw}pt" height="{ph}pt" viewBox="0 0 {pw} {ph}">'
-                f'<image href="data:image/png;base64,{png_b64}" '
-                f'x="0" y="0" width="{pw}" height="{ph}"/>'
-                f'</svg>'
-            )
-            pdf_buf = BytesIO()
-            cairosvg.svg2pdf(bytestring=wrapper_svg.encode("utf-8"),
-                             write_to=pdf_buf, unsafe=True)
-        else:
-            # No blur — direct SVG-to-PDF preserves vector text
-            svg_str = build_page_svg(layout, prompt, img_src, editor_mode=False)
-            pdf_buf = BytesIO()
-            cairosvg.svg2pdf(bytestring=svg_str.encode("utf-8"),
-                             write_to=pdf_buf, unsafe=True)
+        svg_str = build_page_svg(layout, prompt, img_src, editor_mode=False)
+        pdf_buf = BytesIO()
+        cairosvg.svg2pdf(bytestring=svg_str.encode("utf-8"),
+                         write_to=pdf_buf, unsafe=True)
 
         pdf_buf.seek(0)
         reader = PdfReader(pdf_buf)
@@ -511,20 +441,20 @@ body { font-family: 'Liberation Sans', Arial, sans-serif; background: #1a1a2e; c
     <div class="toolbar-row">
       <span class="lbl">Title:</span>
       <label>color <input type="color" id="title-color" value="#ffffff" onchange="onStyleChange()"></label>
-      <label>shadow <input type="color" id="title-shadow-color" value="#000000" onchange="onStyleChange()"></label>
+      <label>shadow<input type="checkbox" id="title-shadow-on" checked onchange="onStyleChange()"></label>
+      <label><input type="color" id="title-shadow-color" value="#000000" onchange="onStyleChange()"></label>
       <label>dx<input type="number" id="title-shadow-dx" value="2" min="-10" max="10" onchange="onStyleChange()"></label>
       <label>dy<input type="number" id="title-shadow-dy" value="2" min="-10" max="10" onchange="onStyleChange()"></label>
-      <label>blur<input type="number" id="title-shadow-blur" value="0" min="0" max="20" step="0.5" onchange="onStyleChange()"></label>
       <label>stroke<input type="color" id="title-stroke-color" value="#000000" onchange="onStyleChange()"></label>
       <label>sw<input type="number" id="title-stroke-width" value="0" min="0" max="20" step="0.5" onchange="onStyleChange()"></label>
       <label>so<input type="number" id="title-stroke-opacity" value="100" min="0" max="100" step="5" onchange="onStyleChange()">%</label>
       <span class="sep"></span>
       <span class="lbl">Body:</span>
       <label>color <input type="color" id="body-color" value="#ffffff" onchange="onStyleChange()"></label>
-      <label>shadow <input type="color" id="body-shadow-color" value="#000000" onchange="onStyleChange()"></label>
+      <label>shadow<input type="checkbox" id="body-shadow-on" checked onchange="onStyleChange()"></label>
+      <label><input type="color" id="body-shadow-color" value="#000000" onchange="onStyleChange()"></label>
       <label>dx<input type="number" id="body-shadow-dx" value="2" min="-10" max="10" onchange="onStyleChange()"></label>
       <label>dy<input type="number" id="body-shadow-dy" value="2" min="-10" max="10" onchange="onStyleChange()"></label>
-      <label>blur<input type="number" id="body-shadow-blur" value="0" min="0" max="20" step="0.5" onchange="onStyleChange()"></label>
       <label>stroke<input type="color" id="body-stroke-color" value="#000000" onchange="onStyleChange()"></label>
       <label>sw<input type="number" id="body-stroke-width" value="0" min="0" max="20" step="0.5" onchange="onStyleChange()"></label>
       <label>so<input type="number" id="body-stroke-opacity" value="100" min="0" max="100" step="5" onchange="onStyleChange()">%</label>
@@ -607,17 +537,17 @@ function defaultLayout(prompt) {
         body_text: prompt.prompt,
         title_color: "#ffffff",
         body_color: "#ffffff",
+        title_shadow_on: true,
         title_shadow_color: "#000000",
         title_shadow_dx: 2,
         title_shadow_dy: 2,
-        title_shadow_blur: 0,
         title_stroke_color: "#000000",
         title_stroke_width: 0,
         title_stroke_opacity: 1.0,
+        body_shadow_on: true,
         body_shadow_color: "#000000",
         body_shadow_dx: 2,
         body_shadow_dy: 2,
-        body_shadow_blur: 0,
         body_stroke_color: "#000000",
         body_stroke_width: 0,
         body_stroke_opacity: 1.0,
@@ -681,17 +611,17 @@ function onStyleChange() {
     const L = layouts[prompts[currentIdx].id];
     L.title_color = document.getElementById("title-color").value;
     L.body_color = document.getElementById("body-color").value;
+    L.title_shadow_on = document.getElementById("title-shadow-on").checked;
     L.title_shadow_color = document.getElementById("title-shadow-color").value;
     L.title_shadow_dx = parseFloat(document.getElementById("title-shadow-dx").value) || 0;
     L.title_shadow_dy = parseFloat(document.getElementById("title-shadow-dy").value) || 0;
-    L.title_shadow_blur = parseFloat(document.getElementById("title-shadow-blur").value) || 0;
     L.title_stroke_color = document.getElementById("title-stroke-color").value;
     L.title_stroke_width = parseFloat(document.getElementById("title-stroke-width").value) || 0;
     L.title_stroke_opacity = (parseInt(document.getElementById("title-stroke-opacity").value) || 100) / 100;
+    L.body_shadow_on = document.getElementById("body-shadow-on").checked;
     L.body_shadow_color = document.getElementById("body-shadow-color").value;
     L.body_shadow_dx = parseFloat(document.getElementById("body-shadow-dx").value) || 0;
     L.body_shadow_dy = parseFloat(document.getElementById("body-shadow-dy").value) || 0;
-    L.body_shadow_blur = parseFloat(document.getElementById("body-shadow-blur").value) || 0;
     L.body_stroke_color = document.getElementById("body-stroke-color").value;
     L.body_stroke_width = parseFloat(document.getElementById("body-stroke-width").value) || 0;
     L.body_stroke_opacity = (parseInt(document.getElementById("body-stroke-opacity").value) || 100) / 100;
@@ -705,17 +635,17 @@ function updateToolbar() {
     document.getElementById("body-size").value = L.body_size;
     document.getElementById("title-color").value = L.title_color;
     document.getElementById("body-color").value = L.body_color;
+    document.getElementById("title-shadow-on").checked = L.title_shadow_on;
     document.getElementById("title-shadow-color").value = L.title_shadow_color;
     document.getElementById("title-shadow-dx").value = L.title_shadow_dx;
     document.getElementById("title-shadow-dy").value = L.title_shadow_dy;
-    document.getElementById("title-shadow-blur").value = L.title_shadow_blur;
     document.getElementById("title-stroke-color").value = L.title_stroke_color;
     document.getElementById("title-stroke-width").value = L.title_stroke_width;
     document.getElementById("title-stroke-opacity").value = Math.round(L.title_stroke_opacity * 100);
+    document.getElementById("body-shadow-on").checked = L.body_shadow_on;
     document.getElementById("body-shadow-color").value = L.body_shadow_color;
     document.getElementById("body-shadow-dx").value = L.body_shadow_dx;
     document.getElementById("body-shadow-dy").value = L.body_shadow_dy;
-    document.getElementById("body-shadow-blur").value = L.body_shadow_blur;
     document.getElementById("body-stroke-color").value = L.body_stroke_color;
     document.getElementById("body-stroke-width").value = L.body_stroke_width;
     document.getElementById("body-stroke-opacity").value = Math.round(L.body_stroke_opacity * 100);
@@ -793,13 +723,24 @@ function buildTextSVG(text, box, fontSize, isBold, align, textColor, shadowColor
     }
 
     // Main text pass
-    const strokeAttrs = (strokeWidth > 0 && strokeColor)
-        ? ` stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-opacity="${strokeOpacity || 1}" paint-order="stroke fill" stroke-linejoin="round"`
-        : "";
+    const fontAttrs = `font-size="${fontSize}" font-weight="${weight}" font-family="Liberation Sans, Arial, sans-serif" text-anchor="${anchor}"`;
+    const hasStroke = strokeWidth > 0 && strokeColor;
+
+    // Stroke pass: draw stroke-only text first (behind fill)
+    if (hasStroke) {
+        let ty = yTop + fontSize + pad;
+        for (const line of lines) {
+            if (ty > yTop + h - 4) break;
+            svg += `<text x="${tx}" y="${ty}" ${fontAttrs} fill="none" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-opacity="${strokeOpacity || 1}" stroke-linejoin="round">${escHtml(line)}</text>\n`;
+            ty += lineH;
+        }
+    }
+
+    // Fill pass: draw filled text on top
     let ty = yTop + fontSize + pad;
     for (const line of lines) {
         if (ty > yTop + h - 4) break;
-        svg += `<text x="${tx}" y="${ty}" font-size="${fontSize}" font-weight="${weight}" font-family="Liberation Sans, Arial, sans-serif" text-anchor="${anchor}" fill="${textColor}"${strokeAttrs}>${escHtml(line)}</text>\n`;
+        svg += `<text x="${tx}" y="${ty}" ${fontAttrs} fill="${textColor}">${escHtml(line)}</text>\n`;
         ty += lineH;
     }
     return svg;
@@ -822,8 +763,6 @@ function renderPage() {
 
     let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${PW} ${PH}">`;
     let defs = `<clipPath id="page-clip"><rect x="0" y="0" width="${PW}" height="${PH}"/></clipPath>`;
-    if (L.title_shadow_blur > 0) defs += `<filter id="title-blur" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur in="SourceGraphic" stdDeviation="${L.title_shadow_blur}"/></filter>`;
-    if (L.body_shadow_blur > 0) defs += `<filter id="body-blur" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur in="SourceGraphic" stdDeviation="${L.body_shadow_blur}"/></filter>`;
     svg += `<defs>${defs}</defs>`;
 
     if (p.has_image) {
@@ -846,13 +785,13 @@ function renderPage() {
     // Title text box (editor wrapper with drag/resize handles)
     svg += buildEditorBox("title", L.title_box,
         buildTextSVG(L.title_text, L.title_box, L.title_size, true, L.title_align, L.title_color,
-            L.title_shadow_color, L.title_shadow_dx, L.title_shadow_dy, L.title_shadow_blur, "title-blur",
+            L.title_shadow_color, L.title_shadow_on ? L.title_shadow_dx : 0, L.title_shadow_on ? L.title_shadow_dy : 0, 0, "",
             L.title_stroke_color, L.title_stroke_width, L.title_stroke_opacity));
 
     // Body text box
     svg += buildEditorBox("body", L.body_box,
         buildTextSVG(L.body_text, L.body_box, L.body_size, false, L.body_align, L.body_color,
-            L.body_shadow_color, L.body_shadow_dx, L.body_shadow_dy, L.body_shadow_blur, "body-blur",
+            L.body_shadow_color, L.body_shadow_on ? L.body_shadow_dx : 0, L.body_shadow_on ? L.body_shadow_dy : 0, 0, "",
             L.body_stroke_color, L.body_stroke_width, L.body_stroke_opacity));
 
     svg += `</svg>`;
