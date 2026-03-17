@@ -677,7 +677,7 @@ document.getElementById("edit-modal-text").addEventListener("keydown", e => { if
 function wrapText(text, fontSize, maxWidth, isBold) {
     const charW = fontSize * (isBold ? 0.58 : 0.52);
     const lines = [];
-    for (const paragraph of text.split("\\n")) {
+    for (const paragraph of text.split("\n")) {
         const words = paragraph.split(/\s+/).filter(w => w);
         if (!words.length) { lines.push(""); continue; }
         let current = "";
@@ -822,6 +822,14 @@ function attachDragListeners() {
     svg.addEventListener("mousemove", onMouseMove);
     svg.addEventListener("mouseup", onMouseUp);
     svg.addEventListener("mouseleave", onMouseUp);
+    svg.addEventListener("dblclick", onDblClick);
+}
+
+function onDblClick(e) {
+    const box = e.target.closest(".text-box");
+    if (!box) return;
+    const bid = box.getAttribute("data-box");
+    if (bid) editText(bid);
 }
 
 function getSVGPoint(e) {
