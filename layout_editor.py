@@ -74,7 +74,8 @@ def _wrap_text_svg(text, font_size, max_width, is_bold):
 
 def _build_text_svg(text, box, font_size, is_bold, align, text_color,
                     shadow_color, shadow_dx, shadow_dy, shadow_blur,
-                    pw=PW, ph=PH, filter_id="", layer=None):
+                    pw=PW, ph=PH, filter_id="", layer=None,
+                    stroke_color="", stroke_width=0, stroke_opacity=1.0):
     """Generate SVG elements for a text box (no box background, just text + shadow).
 
     layer: None = everything, "shadow_only" = only shadow, "no_shadow" = only main text.
@@ -121,6 +122,12 @@ def _build_text_svg(text, box, font_size, is_bold, align, text_color,
 
     # Main text pass
     if layer != "shadow_only":
+        stroke_attrs = ""
+        if stroke_width > 0 and stroke_color:
+            stroke_attrs = (
+                f' stroke="{stroke_color}" stroke-width="{stroke_width}" '
+                f'stroke-opacity="{stroke_opacity}" paint-order="stroke fill" '
+                f'stroke-linejoin="round"')
         ty = y_top + font_size + pad
         for line in lines:
             if ty > y_top + h - 4:
@@ -129,7 +136,8 @@ def _build_text_svg(text, box, font_size, is_bold, align, text_color,
             svg += (f'<text x="{tx}" y="{ty}" '
                     f'font-size="{font_size}" font-weight="{weight}" '
                     f'font-family="Liberation Sans, Arial, sans-serif" '
-                    f'text-anchor="{anchor}" fill="{text_color}">'
+                    f'text-anchor="{anchor}" fill="{text_color}"'
+                    f'{stroke_attrs}>'
                     f'{escaped}</text>\n')
             ty += line_h
     return svg
@@ -218,6 +226,9 @@ def build_page_svg(layout, prompt, img_src, editor_mode=False, layer=None):
             pw, ph,
             "title-blur" if title_blur > 0 else "",
             layer=text_layer,
+            stroke_color=layout.get("title_stroke_color", "#000000"),
+            stroke_width=layout.get("title_stroke_width", 0),
+            stroke_opacity=layout.get("title_stroke_opacity", 1.0),
         )
 
         # Body text
@@ -235,6 +246,9 @@ def build_page_svg(layout, prompt, img_src, editor_mode=False, layer=None):
             pw, ph,
             "body-blur" if body_blur > 0 else "",
             layer=text_layer,
+            stroke_color=layout.get("body_stroke_color", "#000000"),
+            stroke_width=layout.get("body_stroke_width", 0),
+            stroke_opacity=layout.get("body_stroke_opacity", 1.0),
         )
 
     svg += '</svg>'
@@ -501,6 +515,9 @@ body { font-family: 'Liberation Sans', Arial, sans-serif; background: #1a1a2e; c
       <label>dx<input type="number" id="title-shadow-dx" value="2" min="-10" max="10" onchange="onStyleChange()"></label>
       <label>dy<input type="number" id="title-shadow-dy" value="2" min="-10" max="10" onchange="onStyleChange()"></label>
       <label>blur<input type="number" id="title-shadow-blur" value="0" min="0" max="20" step="0.5" onchange="onStyleChange()"></label>
+      <label>stroke<input type="color" id="title-stroke-color" value="#000000" onchange="onStyleChange()"></label>
+      <label>sw<input type="number" id="title-stroke-width" value="0" min="0" max="20" step="0.5" onchange="onStyleChange()"></label>
+      <label>so<input type="number" id="title-stroke-opacity" value="100" min="0" max="100" step="5" onchange="onStyleChange()">%</label>
       <span class="sep"></span>
       <span class="lbl">Body:</span>
       <label>color <input type="color" id="body-color" value="#ffffff" onchange="onStyleChange()"></label>
@@ -508,6 +525,9 @@ body { font-family: 'Liberation Sans', Arial, sans-serif; background: #1a1a2e; c
       <label>dx<input type="number" id="body-shadow-dx" value="2" min="-10" max="10" onchange="onStyleChange()"></label>
       <label>dy<input type="number" id="body-shadow-dy" value="2" min="-10" max="10" onchange="onStyleChange()"></label>
       <label>blur<input type="number" id="body-shadow-blur" value="0" min="0" max="20" step="0.5" onchange="onStyleChange()"></label>
+      <label>stroke<input type="color" id="body-stroke-color" value="#000000" onchange="onStyleChange()"></label>
+      <label>sw<input type="number" id="body-stroke-width" value="0" min="0" max="20" step="0.5" onchange="onStyleChange()"></label>
+      <label>so<input type="number" id="body-stroke-opacity" value="100" min="0" max="100" step="5" onchange="onStyleChange()">%</label>
       <span class="sep"></span>
       <label>Overlay: <input type="number" id="overlay-opacity" value="45" min="0" max="100" step="5" onchange="onStyleChange()">%</label>
       <span class="sep"></span>
@@ -591,10 +611,16 @@ function defaultLayout(prompt) {
         title_shadow_dx: 2,
         title_shadow_dy: 2,
         title_shadow_blur: 0,
+        title_stroke_color: "#000000",
+        title_stroke_width: 0,
+        title_stroke_opacity: 1.0,
         body_shadow_color: "#000000",
         body_shadow_dx: 2,
         body_shadow_dy: 2,
         body_shadow_blur: 0,
+        body_stroke_color: "#000000",
+        body_stroke_width: 0,
+        body_stroke_opacity: 1.0,
         overlay_opacity: 0.45,
         img_offset_x: 0.5,
         img_offset_y: 0.5,
@@ -659,10 +685,16 @@ function onStyleChange() {
     L.title_shadow_dx = parseFloat(document.getElementById("title-shadow-dx").value) || 0;
     L.title_shadow_dy = parseFloat(document.getElementById("title-shadow-dy").value) || 0;
     L.title_shadow_blur = parseFloat(document.getElementById("title-shadow-blur").value) || 0;
+    L.title_stroke_color = document.getElementById("title-stroke-color").value;
+    L.title_stroke_width = parseFloat(document.getElementById("title-stroke-width").value) || 0;
+    L.title_stroke_opacity = (parseInt(document.getElementById("title-stroke-opacity").value) || 100) / 100;
     L.body_shadow_color = document.getElementById("body-shadow-color").value;
     L.body_shadow_dx = parseFloat(document.getElementById("body-shadow-dx").value) || 0;
     L.body_shadow_dy = parseFloat(document.getElementById("body-shadow-dy").value) || 0;
     L.body_shadow_blur = parseFloat(document.getElementById("body-shadow-blur").value) || 0;
+    L.body_stroke_color = document.getElementById("body-stroke-color").value;
+    L.body_stroke_width = parseFloat(document.getElementById("body-stroke-width").value) || 0;
+    L.body_stroke_opacity = (parseInt(document.getElementById("body-stroke-opacity").value) || 100) / 100;
     L.overlay_opacity = (parseInt(document.getElementById("overlay-opacity").value) || 45) / 100;
     renderPage();
 }
@@ -677,10 +709,16 @@ function updateToolbar() {
     document.getElementById("title-shadow-dx").value = L.title_shadow_dx;
     document.getElementById("title-shadow-dy").value = L.title_shadow_dy;
     document.getElementById("title-shadow-blur").value = L.title_shadow_blur;
+    document.getElementById("title-stroke-color").value = L.title_stroke_color;
+    document.getElementById("title-stroke-width").value = L.title_stroke_width;
+    document.getElementById("title-stroke-opacity").value = Math.round(L.title_stroke_opacity * 100);
     document.getElementById("body-shadow-color").value = L.body_shadow_color;
     document.getElementById("body-shadow-dx").value = L.body_shadow_dx;
     document.getElementById("body-shadow-dy").value = L.body_shadow_dy;
     document.getElementById("body-shadow-blur").value = L.body_shadow_blur;
+    document.getElementById("body-stroke-color").value = L.body_stroke_color;
+    document.getElementById("body-stroke-width").value = L.body_stroke_width;
+    document.getElementById("body-stroke-opacity").value = Math.round(L.body_stroke_opacity * 100);
     document.getElementById("overlay-opacity").value = Math.round(L.overlay_opacity * 100);
     document.getElementById("page-size").value = pageSizeKey;
     document.querySelectorAll(".align-btn").forEach(btn => {
@@ -729,7 +767,7 @@ function escHtml(s) {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function buildTextSVG(text, box, fontSize, isBold, align, textColor, shadowColor, sdx, sdy, sblur, filterId) {
+function buildTextSVG(text, box, fontSize, isBold, align, textColor, shadowColor, sdx, sdy, sblur, filterId, strokeColor, strokeWidth, strokeOpacity) {
     const x = box.x * PW, yTop = box.y * PH, w = box.w * PW, h = box.h * PH;
     const pad = 8, lineH = fontSize * 1.25;
     const lines = wrapText(text, fontSize, w - 2 * pad, isBold);
@@ -755,10 +793,13 @@ function buildTextSVG(text, box, fontSize, isBold, align, textColor, shadowColor
     }
 
     // Main text pass
+    const strokeAttrs = (strokeWidth > 0 && strokeColor)
+        ? ` stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-opacity="${strokeOpacity || 1}" paint-order="stroke fill" stroke-linejoin="round"`
+        : "";
     let ty = yTop + fontSize + pad;
     for (const line of lines) {
         if (ty > yTop + h - 4) break;
-        svg += `<text x="${tx}" y="${ty}" font-size="${fontSize}" font-weight="${weight}" font-family="Liberation Sans, Arial, sans-serif" text-anchor="${anchor}" fill="${textColor}">${escHtml(line)}</text>\n`;
+        svg += `<text x="${tx}" y="${ty}" font-size="${fontSize}" font-weight="${weight}" font-family="Liberation Sans, Arial, sans-serif" text-anchor="${anchor}" fill="${textColor}"${strokeAttrs}>${escHtml(line)}</text>\n`;
         ty += lineH;
     }
     return svg;
@@ -805,12 +846,14 @@ function renderPage() {
     // Title text box (editor wrapper with drag/resize handles)
     svg += buildEditorBox("title", L.title_box,
         buildTextSVG(L.title_text, L.title_box, L.title_size, true, L.title_align, L.title_color,
-            L.title_shadow_color, L.title_shadow_dx, L.title_shadow_dy, L.title_shadow_blur, "title-blur"));
+            L.title_shadow_color, L.title_shadow_dx, L.title_shadow_dy, L.title_shadow_blur, "title-blur",
+            L.title_stroke_color, L.title_stroke_width, L.title_stroke_opacity));
 
     // Body text box
     svg += buildEditorBox("body", L.body_box,
         buildTextSVG(L.body_text, L.body_box, L.body_size, false, L.body_align, L.body_color,
-            L.body_shadow_color, L.body_shadow_dx, L.body_shadow_dy, L.body_shadow_blur, "body-blur"));
+            L.body_shadow_color, L.body_shadow_dx, L.body_shadow_dy, L.body_shadow_blur, "body-blur",
+            L.body_stroke_color, L.body_stroke_width, L.body_stroke_opacity));
 
     svg += `</svg>`;
     container.innerHTML = svg;
