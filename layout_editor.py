@@ -54,20 +54,25 @@ def _esc(s):
 
 
 def _wrap_text_svg(text, font_size, max_width, is_bold):
-    """Word-wrap text using approximate character widths for Liberation Sans."""
+    """Word-wrap text using approximate character widths for Liberation Sans.
+    Preserves explicit newlines from the source text."""
     char_w = font_size * (0.58 if is_bold else 0.52)
-    words = text.split()
     lines = []
-    current = ""
-    for word in words:
-        test = f"{current} {word}".strip() if current else word
-        if len(test) * char_w > max_width and current:
+    for paragraph in text.split("\n"):
+        words = paragraph.split()
+        if not words:
+            lines.append("")
+            continue
+        current = ""
+        for word in words:
+            test = f"{current} {word}".strip() if current else word
+            if len(test) * char_w > max_width and current:
+                lines.append(current)
+                current = word
+            else:
+                current = test
+        if current:
             lines.append(current)
-            current = word
-        else:
-            current = test
-    if current:
-        lines.append(current)
     return lines
 
 
@@ -214,6 +219,8 @@ def build_page_svg(layout, prompt, img_src, editor_mode=False, layer=None):
         text_layer = "no_shadow" if layer == "text_only" else layer
         title_shadow_on = layout.get("title_shadow_on", True)
         body_shadow_on = layout.get("body_shadow_on", True)
+        title_stroke_on = layout.get("title_stroke_on", False)
+        body_stroke_on = layout.get("body_stroke_on", False)
 
         # Title text
         svg += _build_text_svg(
@@ -228,8 +235,8 @@ def build_page_svg(layout, prompt, img_src, editor_mode=False, layer=None):
             layout.get("title_shadow_dy", 2) if title_shadow_on else 0,
             0, pw, ph, "",
             layer=text_layer,
-            stroke_color=layout.get("title_stroke_color", "#000000"),
-            stroke_width=layout.get("title_stroke_width", 0),
+            stroke_color=layout.get("title_stroke_color", "#000000") if title_stroke_on else "",
+            stroke_width=layout.get("title_stroke_width", 0) if title_stroke_on else 0,
             stroke_opacity=layout.get("title_stroke_opacity", 1.0),
         )
 
@@ -246,8 +253,8 @@ def build_page_svg(layout, prompt, img_src, editor_mode=False, layer=None):
             layout.get("body_shadow_dy", 2) if body_shadow_on else 0,
             0, pw, ph, "",
             layer=text_layer,
-            stroke_color=layout.get("body_stroke_color", "#000000"),
-            stroke_width=layout.get("body_stroke_width", 0),
+            stroke_color=layout.get("body_stroke_color", "#000000") if body_stroke_on else "",
+            stroke_width=layout.get("body_stroke_width", 0) if body_stroke_on else 0,
             stroke_opacity=layout.get("body_stroke_opacity", 1.0),
         )
 
@@ -415,49 +422,11 @@ body { font-family: 'Liberation Sans', Arial, sans-serif; background: #1a1a2e; c
     <div id="prompt-list"></div>
   </div>
   <div id="main">
-    <!-- Row 1: Navigation + text sizes + alignment + edit -->
+    <!-- Row 1: Navigation + page settings + generate -->
     <div class="toolbar-row">
       <button class="btn-nav" onclick="prevPage()">&larr;</button>
       <span class="page-info" id="page-info">1 / 10</span>
       <button class="btn-nav" onclick="nextPage()">&rarr;</button>
-      <span class="sep"></span>
-      <span class="lbl">Title:</span>
-      <input type="number" id="title-size" value="34" min="10" max="72" onchange="onSizeChange()">
-      <button class="align-btn" data-target="title" data-align="left" onclick="setAlign(this)" title="Left">&#9776;</button>
-      <button class="align-btn" data-target="title" data-align="center" onclick="setAlign(this)" title="Center">&#9778;</button>
-      <button class="align-btn" data-target="title" data-align="right" onclick="setAlign(this)" title="Right">&#9783;</button>
-      <button class="btn-primary" onclick="editText('title')">Edit</button>
-      <span class="sep"></span>
-      <span class="lbl">Body:</span>
-      <input type="number" id="body-size" value="21" min="10" max="48" onchange="onSizeChange()">
-      <button class="align-btn" data-target="body" data-align="left" onclick="setAlign(this)" title="Left">&#9776;</button>
-      <button class="align-btn" data-target="body" data-align="center" onclick="setAlign(this)" title="Center">&#9778;</button>
-      <button class="align-btn" data-target="body" data-align="right" onclick="setAlign(this)" title="Right">&#9783;</button>
-      <button class="btn-primary" onclick="editText('body')">Edit</button>
-      <span class="sep"></span>
-      <button class="btn-warn" onclick="resetCurrent()">Reset</button>
-    </div>
-    <!-- Row 2: Colors + shadow controls + generate -->
-    <div class="toolbar-row">
-      <span class="lbl">Title:</span>
-      <label>color <input type="color" id="title-color" value="#ffffff" onchange="onStyleChange()"></label>
-      <label>shadow<input type="checkbox" id="title-shadow-on" checked onchange="onStyleChange()"></label>
-      <label><input type="color" id="title-shadow-color" value="#000000" onchange="onStyleChange()"></label>
-      <label>dx<input type="number" id="title-shadow-dx" value="2" min="-10" max="10" onchange="onStyleChange()"></label>
-      <label>dy<input type="number" id="title-shadow-dy" value="2" min="-10" max="10" onchange="onStyleChange()"></label>
-      <label>stroke<input type="color" id="title-stroke-color" value="#000000" onchange="onStyleChange()"></label>
-      <label>sw<input type="number" id="title-stroke-width" value="0" min="0" max="20" step="0.5" onchange="onStyleChange()"></label>
-      <label>so<input type="number" id="title-stroke-opacity" value="100" min="0" max="100" step="5" onchange="onStyleChange()">%</label>
-      <span class="sep"></span>
-      <span class="lbl">Body:</span>
-      <label>color <input type="color" id="body-color" value="#ffffff" onchange="onStyleChange()"></label>
-      <label>shadow<input type="checkbox" id="body-shadow-on" checked onchange="onStyleChange()"></label>
-      <label><input type="color" id="body-shadow-color" value="#000000" onchange="onStyleChange()"></label>
-      <label>dx<input type="number" id="body-shadow-dx" value="2" min="-10" max="10" onchange="onStyleChange()"></label>
-      <label>dy<input type="number" id="body-shadow-dy" value="2" min="-10" max="10" onchange="onStyleChange()"></label>
-      <label>stroke<input type="color" id="body-stroke-color" value="#000000" onchange="onStyleChange()"></label>
-      <label>sw<input type="number" id="body-stroke-width" value="0" min="0" max="20" step="0.5" onchange="onStyleChange()"></label>
-      <label>so<input type="number" id="body-stroke-opacity" value="100" min="0" max="100" step="5" onchange="onStyleChange()">%</label>
       <span class="sep"></span>
       <label>Overlay: <input type="number" id="overlay-opacity" value="45" min="0" max="100" step="5" onchange="onStyleChange()">%</label>
       <span class="sep"></span>
@@ -470,9 +439,36 @@ body { font-family: 'Liberation Sans', Arial, sans-serif; background: #1a1a2e; c
           <option value="a5">A5</option>
         </select>
       </label>
+      <span class="sep"></span>
+      <button class="btn-warn" onclick="resetCurrent()">Reset</button>
       <span class="spacer"></span>
-      <span class="status" id="status">Drag background to pan image</span>
+      <span class="status" id="status">Click a text box to edit its style</span>
       <button class="btn-success" id="generate-btn" onclick="generatePDF()">Generate PDF</button>
+    </div>
+    <!-- Row 2: Selected-box controls (appears when a box is selected) -->
+    <div class="toolbar-row" id="box-toolbar" style="display:none">
+      <span class="lbl" id="box-toolbar-label">Title:</span>
+      <input type="number" id="sel-size" value="34" min="10" max="72" onchange="onSelChange()">
+      <button class="align-btn" data-align="left" onclick="setSelAlign(this)" title="Left">&#9776;</button>
+      <button class="align-btn" data-align="center" onclick="setSelAlign(this)" title="Center">&#9778;</button>
+      <button class="align-btn" data-align="right" onclick="setSelAlign(this)" title="Right">&#9783;</button>
+      <button class="btn-primary" onclick="editText(selectedBox)">Edit</button>
+      <span class="sep"></span>
+      <label>color <input type="color" id="sel-color" value="#ffffff" onchange="onSelChange()"></label>
+      <span class="sep"></span>
+      <label>shadow<input type="checkbox" id="sel-shadow-on" checked onchange="onSelChange()"></label>
+      <span id="shadow-fields">
+        <label><input type="color" id="sel-shadow-color" value="#000000" onchange="onSelChange()"></label>
+        <label>dx<input type="number" id="sel-shadow-dx" value="2" min="-10" max="10" onchange="onSelChange()"></label>
+        <label>dy<input type="number" id="sel-shadow-dy" value="2" min="-10" max="10" onchange="onSelChange()"></label>
+      </span>
+      <span class="sep"></span>
+      <label>stroke<input type="checkbox" id="sel-stroke-on" onchange="onSelChange()"></label>
+      <span id="stroke-fields">
+        <label><input type="color" id="sel-stroke-color" value="#000000" onchange="onSelChange()"></label>
+        <label>w<input type="number" id="sel-stroke-width" value="0" min="0" max="20" step="0.5" onchange="onSelChange()"></label>
+        <label>opacity<input type="number" id="sel-stroke-opacity" value="100" min="0" max="100" step="5" onchange="onSelChange()">%</label>
+      </span>
     </div>
     <div id="canvas-wrap">
       <div id="page-container"></div>
@@ -496,7 +492,7 @@ body { font-family: 'Liberation Sans', Arial, sans-serif; background: #1a1a2e; c
 let prompts = [];
 let currentIdx = 0;
 let layouts = {};
-let selectedBox = null;
+let selectedBox = "title";
 
 // Page sizes in points (72pt = 1 inch)
 const PAGE_SIZES = {
@@ -541,16 +537,18 @@ function defaultLayout(prompt) {
         title_shadow_color: "#000000",
         title_shadow_dx: 2,
         title_shadow_dy: 2,
+        title_stroke_on: false,
         title_stroke_color: "#000000",
-        title_stroke_width: 0,
-        title_stroke_opacity: 1.0,
+        title_stroke_width: 3,
+        title_stroke_opacity: 0.6,
         body_shadow_on: true,
         body_shadow_color: "#000000",
         body_shadow_dx: 2,
         body_shadow_dy: 2,
+        body_stroke_on: false,
         body_stroke_color: "#000000",
-        body_stroke_width: 0,
-        body_stroke_opacity: 1.0,
+        body_stroke_width: 2,
+        body_stroke_opacity: 0.5,
         overlay_opacity: 0.45,
         img_offset_x: 0.5,
         img_offset_y: 0.5,
@@ -588,71 +586,72 @@ function renderSidebar() {
     `).join("");
 }
 
-function goToPage(idx) { currentIdx = idx; selectedBox = null; renderSidebar(); renderPage(); }
+function goToPage(idx) { currentIdx = idx; selectedBox = "title"; renderSidebar(); renderPage(); }
 function prevPage() { if (currentIdx > 0) goToPage(currentIdx - 1); }
 function nextPage() { if (currentIdx < prompts.length - 1) goToPage(currentIdx + 1); }
 
 function resetCurrent() { layouts[prompts[currentIdx].id] = defaultLayout(prompts[currentIdx]); renderPage(); }
 
 // ── Toolbar handlers ──────────────────────────────────────────────────
-function onSizeChange() {
-    const L = layouts[prompts[currentIdx].id];
-    L.title_size = parseInt(document.getElementById("title-size").value) || 34;
-    L.body_size = parseInt(document.getElementById("body-size").value) || 21;
-    renderPage();
-}
-
-function setAlign(btn) {
-    layouts[prompts[currentIdx].id][btn.dataset.target + "_align"] = btn.dataset.align;
-    renderPage();
-}
-
 function onStyleChange() {
     const L = layouts[prompts[currentIdx].id];
-    L.title_color = document.getElementById("title-color").value;
-    L.body_color = document.getElementById("body-color").value;
-    L.title_shadow_on = document.getElementById("title-shadow-on").checked;
-    L.title_shadow_color = document.getElementById("title-shadow-color").value;
-    L.title_shadow_dx = parseFloat(document.getElementById("title-shadow-dx").value) || 0;
-    L.title_shadow_dy = parseFloat(document.getElementById("title-shadow-dy").value) || 0;
-    L.title_stroke_color = document.getElementById("title-stroke-color").value;
-    L.title_stroke_width = parseFloat(document.getElementById("title-stroke-width").value) || 0;
-    L.title_stroke_opacity = (parseInt(document.getElementById("title-stroke-opacity").value) || 100) / 100;
-    L.body_shadow_on = document.getElementById("body-shadow-on").checked;
-    L.body_shadow_color = document.getElementById("body-shadow-color").value;
-    L.body_shadow_dx = parseFloat(document.getElementById("body-shadow-dx").value) || 0;
-    L.body_shadow_dy = parseFloat(document.getElementById("body-shadow-dy").value) || 0;
-    L.body_stroke_color = document.getElementById("body-stroke-color").value;
-    L.body_stroke_width = parseFloat(document.getElementById("body-stroke-width").value) || 0;
-    L.body_stroke_opacity = (parseInt(document.getElementById("body-stroke-opacity").value) || 100) / 100;
     L.overlay_opacity = (parseInt(document.getElementById("overlay-opacity").value) || 45) / 100;
+    renderPage();
+}
+
+function setSelAlign(btn) {
+    if (!selectedBox) return;
+    layouts[prompts[currentIdx].id][selectedBox + "_align"] = btn.dataset.align;
+    renderPage();
+}
+
+function onSelChange() {
+    if (!selectedBox) return;
+    const L = layouts[prompts[currentIdx].id];
+    const b = selectedBox;
+    L[b + "_size"] = parseInt(document.getElementById("sel-size").value) || (b === "title" ? 34 : 21);
+    L[b + "_color"] = document.getElementById("sel-color").value;
+    L[b + "_shadow_on"] = document.getElementById("sel-shadow-on").checked;
+    L[b + "_shadow_color"] = document.getElementById("sel-shadow-color").value;
+    L[b + "_shadow_dx"] = parseFloat(document.getElementById("sel-shadow-dx").value) || 0;
+    L[b + "_shadow_dy"] = parseFloat(document.getElementById("sel-shadow-dy").value) || 0;
+    L[b + "_stroke_on"] = document.getElementById("sel-stroke-on").checked;
+    L[b + "_stroke_color"] = document.getElementById("sel-stroke-color").value;
+    L[b + "_stroke_width"] = parseFloat(document.getElementById("sel-stroke-width").value) || 0;
+    L[b + "_stroke_opacity"] = (parseInt(document.getElementById("sel-stroke-opacity").value) || 100) / 100;
+    // Show/hide sub-fields
+    document.getElementById("shadow-fields").style.display = L[b + "_shadow_on"] ? "" : "none";
+    document.getElementById("stroke-fields").style.display = L[b + "_stroke_on"] ? "" : "none";
     renderPage();
 }
 
 function updateToolbar() {
     const L = layouts[prompts[currentIdx].id];
-    document.getElementById("title-size").value = L.title_size;
-    document.getElementById("body-size").value = L.body_size;
-    document.getElementById("title-color").value = L.title_color;
-    document.getElementById("body-color").value = L.body_color;
-    document.getElementById("title-shadow-on").checked = L.title_shadow_on;
-    document.getElementById("title-shadow-color").value = L.title_shadow_color;
-    document.getElementById("title-shadow-dx").value = L.title_shadow_dx;
-    document.getElementById("title-shadow-dy").value = L.title_shadow_dy;
-    document.getElementById("title-stroke-color").value = L.title_stroke_color;
-    document.getElementById("title-stroke-width").value = L.title_stroke_width;
-    document.getElementById("title-stroke-opacity").value = Math.round(L.title_stroke_opacity * 100);
-    document.getElementById("body-shadow-on").checked = L.body_shadow_on;
-    document.getElementById("body-shadow-color").value = L.body_shadow_color;
-    document.getElementById("body-shadow-dx").value = L.body_shadow_dx;
-    document.getElementById("body-shadow-dy").value = L.body_shadow_dy;
-    document.getElementById("body-stroke-color").value = L.body_stroke_color;
-    document.getElementById("body-stroke-width").value = L.body_stroke_width;
-    document.getElementById("body-stroke-opacity").value = Math.round(L.body_stroke_opacity * 100);
     document.getElementById("overlay-opacity").value = Math.round(L.overlay_opacity * 100);
     document.getElementById("page-size").value = pageSizeKey;
-    document.querySelectorAll(".align-btn").forEach(btn => {
-        btn.classList.toggle("active", L[btn.dataset.target + "_align"] === btn.dataset.align);
+
+    const bar = document.getElementById("box-toolbar");
+    if (!selectedBox) { bar.style.display = "none"; return; }
+    bar.style.display = "";
+
+    const b = selectedBox;
+    document.getElementById("box-toolbar-label").textContent = (b === "title" ? "Title:" : "Body:");
+    document.getElementById("sel-size").value = L[b + "_size"];
+    document.getElementById("sel-color").value = L[b + "_color"];
+    document.getElementById("sel-shadow-on").checked = L[b + "_shadow_on"];
+    document.getElementById("sel-shadow-color").value = L[b + "_shadow_color"];
+    document.getElementById("sel-shadow-dx").value = L[b + "_shadow_dx"];
+    document.getElementById("sel-shadow-dy").value = L[b + "_shadow_dy"];
+    document.getElementById("sel-stroke-on").checked = L[b + "_stroke_on"] || false;
+    document.getElementById("sel-stroke-color").value = L[b + "_stroke_color"];
+    document.getElementById("sel-stroke-width").value = L[b + "_stroke_width"];
+    document.getElementById("sel-stroke-opacity").value = Math.round(L[b + "_stroke_opacity"] * 100);
+    // Show/hide sub-fields
+    document.getElementById("shadow-fields").style.display = L[b + "_shadow_on"] ? "" : "none";
+    document.getElementById("stroke-fields").style.display = L[b + "_stroke_on"] ? "" : "none";
+    // Align buttons
+    document.querySelectorAll("#box-toolbar .align-btn").forEach(btn => {
+        btn.classList.toggle("active", L[b + "_align"] === btn.dataset.align);
     });
 }
 
@@ -677,19 +676,22 @@ document.getElementById("edit-modal-text").addEventListener("keydown", e => { if
 // ── SVG text rendering (shared logic with server) ─────────────────────
 function wrapText(text, fontSize, maxWidth, isBold) {
     const charW = fontSize * (isBold ? 0.58 : 0.52);
-    const words = text.split(/\s+/);
     const lines = [];
-    let current = "";
-    for (const word of words) {
-        const test = current ? current + " " + word : word;
-        if (test.length * charW > maxWidth && current) {
-            lines.push(current);
-            current = word;
-        } else {
-            current = test;
+    for (const paragraph of text.split("\\n")) {
+        const words = paragraph.split(/\s+/).filter(w => w);
+        if (!words.length) { lines.push(""); continue; }
+        let current = "";
+        for (const word of words) {
+            const test = current ? current + " " + word : word;
+            if (test.length * charW > maxWidth && current) {
+                lines.push(current);
+                current = word;
+            } else {
+                current = test;
+            }
         }
+        if (current) lines.push(current);
     }
-    if (current) lines.push(current);
     return lines;
 }
 
@@ -786,13 +788,13 @@ function renderPage() {
     svg += buildEditorBox("title", L.title_box,
         buildTextSVG(L.title_text, L.title_box, L.title_size, true, L.title_align, L.title_color,
             L.title_shadow_color, L.title_shadow_on ? L.title_shadow_dx : 0, L.title_shadow_on ? L.title_shadow_dy : 0, 0, "",
-            L.title_stroke_color, L.title_stroke_width, L.title_stroke_opacity));
+            L.title_stroke_on ? L.title_stroke_color : "", L.title_stroke_on ? L.title_stroke_width : 0, L.title_stroke_opacity));
 
     // Body text box
     svg += buildEditorBox("body", L.body_box,
         buildTextSVG(L.body_text, L.body_box, L.body_size, false, L.body_align, L.body_color,
             L.body_shadow_color, L.body_shadow_on ? L.body_shadow_dx : 0, L.body_shadow_on ? L.body_shadow_dy : 0, 0, "",
-            L.body_stroke_color, L.body_stroke_width, L.body_stroke_opacity));
+            L.body_stroke_on ? L.body_stroke_color : "", L.body_stroke_on ? L.body_stroke_width : 0, L.body_stroke_opacity));
 
     svg += `</svg>`;
     container.innerHTML = svg;
